@@ -41,8 +41,17 @@ The following packages are required for the full compilation of Dagster:
 
 This project can be run using Docker, as follows:
 
+#### The First Time you Run
+
 ```bash
-docker run -it --mount src=`pwd`,target=/home/appuser,type=bind milthorpe/async-neighbours
+docker run --name -it --mount src=`pwd`,target=/home/appuser,type=bind milthorpe/async-neighbours
+```
+
+#### The Second Time you Run
+
+
+```bash
+docker start -ai dagster
 ```
 
 #### Building Docker Image
