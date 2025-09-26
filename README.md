@@ -44,7 +44,7 @@ This project can be run using Docker, as follows:
 #### The First Time you Run
 
 ```bash
-docker run --name -it --mount src=`pwd`,target=/home/appuser,type=bind milthorpe/async-neighbours
+docker run --name dagster -it --mount src=`pwd`,target=/home/appuser,type=bind milthorpe/async-neighbours
 ```
 
 #### The Second Time you Run
