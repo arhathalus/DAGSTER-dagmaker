@@ -99,7 +99,7 @@ std::vector<std::pair<int, int>> rank_vars__optimised(const CNF& cnf) {
 	 ; v <= cnf.num_vars
 	 ; v++) {
     auto& neighbors = adj[v];
-    if (neighbors.empty()) { assert (0); continue;}
+    if (neighbors.empty()) { /*std::cerr<<"Variable "<<v<<" has no neighbors."<<std::endl;*/ /*assert (0);*/ continue;}
     
     std::sort(neighbors.begin(), neighbors.end());
     neighbors.erase(std::unique(neighbors.begin(), neighbors.end()), neighbors.end());
@@ -207,21 +207,21 @@ int main(int argc, char** argv){
     // 	   ; c < cnf.num_clauses
     // 	   ; c++) {
     //   size_t b = cnf.clause_offsets[c], e = cnf.clause_offsets[c+1];
-    //   for (size_t i = b; i < e; i++) std::printf("%d ", cnf.lits[i]);
+    //   for (size_t i = b; i < e; i++) std::fprintf(stderr,"%d ", cnf.lits[i]);
     //   std::puts("0");
     // }
 
     // FOR DEBUGGING ONLY -- Print variable ranks
-    // auto ranks = rank_vars__optimised(cnf);
-    // int rank = 1;
-    // for (const auto& [var_id, degree] : ranks) {
-    //   std::cout<<rank<<"\t"<<var_id<<"\t"<<degree<<"\n";
-    //   rank++;
-    // }
+    auto ranks = rank_vars__optimised(cnf);
+    int rank = 1;
+    for (const auto& [var_id, degree] : ranks) {
+      std::cerr<<rank<<"\t"<<var_id<<"\t"<<degree<<"\n";
+      rank++;
+    }
 
 
     // Print DAG and CNF files for Dagster
-    generate_dagster_input_files(cnf,5,"x");
+    generate_dagster_input_files(cnf,32,"x");
     
   } catch (const std::exception& e) {
     if (input_cnf_filename) std::fclose(file_pointer);
