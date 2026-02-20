@@ -1,0 +1,6 @@
+*.pbo.zst filter=lfs diff=lfs merge=lfs -text
+*.cnf.xz filter=lfs diff=lfs merge=lfs -text
+*.pbo.xz filter=lfs diff=lfs merge=lfs -text
+*.cnf.zst filter=lfs diff=lfs merge=lfs -text
+*.xz  filter=lfs diff=lfs merge=lfs -text
+*.zst filter=lfs diff=lfs merge=lfs -text
