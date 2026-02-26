@@ -22,6 +22,7 @@ If not, see <http://www.gnu.org/licenses/>.
 
 
 #include "parsing.h"
+#include "up.h"
 
 #include <iostream>
 #include <sstream>
@@ -195,10 +196,12 @@ int main(int argc, char** argv){
   if (!file_pointer) { std::perror("Unable to open intput file."); return 1; }
   
   try {
+    CNF _cnf;
     CNF cnf;
-    parse_file(file_pointer, cnf);
+    parse_file(file_pointer, _cnf);
     if (input_cnf_filename) std::fclose(file_pointer);    
-
+    up::Result r = up::simplify(_cnf, cnf, true);
+    assert(r.sat != false);
     
     // FOR DEBUGGING ONLY -- Print CNF parsed
     // std::printf("vars=%d clauses=%d lits=%zu\n",
