@@ -23,11 +23,13 @@ If not, see <http://www.gnu.org/licenses/>.
 #ifndef _CNF_H_
 #define _CNF_H_
 
+#include <vector>
+
 struct CNF {
   int num_vars = 0;
   int num_clauses = 0;
   std::vector<int> lits; 
-  std::vector<size_t> clause_offsets;  // size == num_clauses + 1
+  std::vector<std::size_t> clause_offsets;  // size == num_clauses + 1
 };
 
 

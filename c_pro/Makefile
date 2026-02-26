@@ -1,9 +1,9 @@
 
-CXX                  = g++
-CXXFLAGS                += -O3
+CXX                  = g++ -ggdb 
+CXXFLAGS                += #-O3
 LDFLAGS                 += -lm
 
-OBJS = main.o
+OBJS = main.o up.o
 
 c_pro: $(OBJS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS)  $(LDFLAGS) $(OBJS) -o c_pro
