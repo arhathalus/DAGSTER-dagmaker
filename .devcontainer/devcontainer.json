@@ -1,0 +1,9 @@
+{
+  "name": "dagster",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "appuser",
+  "workspaceFolder": "/workspaces/dagster"
+}
