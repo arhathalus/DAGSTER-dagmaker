@@ -24,6 +24,11 @@ If not, see <http://www.gnu.org/licenses/>.
 #ifndef UTILITIES_HH
 #define UTILITIES_HH
 
+
+#if defined(__APPLE__) && defined(__aarch64__) && (CHAR_MIN == 0)
+#error "Plain char is unsigned on this build. Add -fsigned-char to your build flags.
+#endif
+
 #include <iostream>
 #include <iterator>
 #include <deque>

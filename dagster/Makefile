@@ -14,6 +14,11 @@ else
 	MPICXX                  = mpic++
 	CXXFLAGS                += -ggdb -O3 -std=c++17 -I. -Iminisat
 	LDFLAGS                 += -lglog -lstdc++fs -lcudd -lz
+
+        # macOS workaround for char/EOF parser behavior
+	ifeq ($(shell uname -s),Darwin)
+		CXXFLAGS += -fsigned-char -DDAGSTER_MAC_CHAR_WORKAROUND=1
+	endif
 endif
 #Profiling
 #       LDFLAGS                 += -L/usr/local/lib/openmpi -lmpiP -lm -lbfd -liberty -lunwind -L.. -ldummy_mpi1
