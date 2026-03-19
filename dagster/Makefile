@@ -16,7 +16,12 @@ else
 	LDFLAGS                 += -lglog -lstdc++fs -lcudd -lz
 
         # macOS workaround for char/EOF parser behavior
-	ifeq ($(shell uname -s),Darwin)
+	#ifeq ($(shell uname -s),Darwin) ## first idea
+	#CHAR_IS_UNSIGNED := $(shell printf '' | $(MPICXX) -dM -E -x c++ - 2>/dev/null | grep -c "__CHAR_UNSIGNED__") ## Copilot suggestion
+	#ifneq ($(CHAR_IS_UNSIGNED),0)
+	ARCH := $(shell uname -m)
+	# strong ARM the compiler
+	ifneq (,$(filter $(ARCH),arm64 aarch64))
 		CXXFLAGS += -fsigned-char -DDAGSTER_MAC_CHAR_WORKAROUND=1
 	endif
 endif
