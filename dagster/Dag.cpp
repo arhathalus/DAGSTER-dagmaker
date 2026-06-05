@@ -378,12 +378,32 @@ void Dag::check_consistency() {
   for (auto it = reverse_connections.begin(); it != reverse_connections.end(); it++)
     if (!check_all_unique(*it))
       throw ConsistencyException(" Invalid Dag-file has repeated reverse connections!\n");
-  // checks that the graph is acyclic
-  // by selecting the nodes and traversing all the ways forward
-  // and then checking if infinite loop is encountered (is rough coding)
-  for (int i = 0; i < no_nodes; i++) {
-    if (_recursive_forward(i, 0, forward_connections) == -1)
-      throw ConsistencyException(" Invalid Dag-file is cyclic! or too big!\n");
+  // checks that the graph is acyclic, via an iterative white/grey/black DFS.
+  // O(V+E), no recursion-depth limit, and does not conflate "deep" with "cyclic"
+  // (the previous recursive version re-explored shared subtrees exponentially and
+  // rejected valid-but-deep DAGs once depth exceeded MAX_DAG_DEPTH).
+  std::vector<int> colour(no_nodes, 0);   // 0=unvisited, 1=on-stack, 2=done
+  for (int s = 0; s < no_nodes; s++) {
+    if (colour[s] != 0) continue;
+    std::vector<std::pair<int, size_t>> stack;  // (node, next child index)
+    stack.push_back({s, 0});
+    colour[s] = 1;
+    while (!stack.empty()) {
+      int u = stack.back().first;
+      size_t &ci = stack.back().second;
+      if (ci < forward_connections[u].size()) {
+        int w = forward_connections[u][ci++];
+        if (colour[w] == 1)   // back-edge to a node on the current path => cycle
+          throw ConsistencyException(" Invalid Dag-file is cyclic!\n");
+        if (colour[w] == 0) {
+          colour[w] = 1;
+          stack.push_back({w, 0});
+        }
+      } else {
+        colour[u] = 2;
+        stack.pop_back();
+      }
+    }
   }
 }
 

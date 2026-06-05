@@ -1,0 +1,117 @@
+% LaTeX Template for short student reports.
+% Citations should be in bibtex format and go in references.bib
+\documentclass[a4paper, 11pt]{article}
+\usepackage[top=3cm, bottom=3cm, left = 2cm, right = 2cm]{geometry} 
+\geometry{a4paper} 
+\usepackage[utf8]{inputenc}
+\usepackage{textcomp}
+\usepackage{graphicx} 
+\usepackage{amsmath,amssymb}  
+\usepackage{bm}  
+\usepackage[pdftex,bookmarks,colorlinks,breaklinks]{hyperref}  
+%\hypersetup{linkcolor=black,citecolor=black,filecolor=black,urlcolor=black} % black links, for printed output
+\usepackage{memhfixc} 
+\usepackage{pdfsync}  
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+
+\title{A (possibly) Interesting set of SAT problems}
+\author{Timothy McMahon}
+%\date{}
+
+\begin{document}
+%\maketitle
+%\tableofcontents
+
+\section{Introduction}
+
+This is a list of problems that should be solveable using SAT.  Hopefully they are of interest and lead to some interesting decompositions for dagster.
+
+%\pagebreak
+
+\section{Domatic Partitions of the Boolean Cube}
+ 
+The $n$-dimensional Boolean cube is the simple graph $Q_n$, whose vertices $V$ are the sequences of $0$s and $1$s of length $n$.  There is an edge between two vertices if the Hamming distance between them is 1 (i.e. if they differ in exactly one bit). 
+
+\begin{figure}[h!]
+    \centering
+     \includegraphics[width=0.5\textwidth]{{boolean_cube.drawio.pdf}}
+    \caption{The first few Boolean cubes}
+    \end{figure}
+
+
+A subset $S$ of the vertices is \textbf{dominating} if every vertex not in $S$ is adjacent to some vertex in $S$.
+A partition of the vertices of $Q_n$ into sets $S_1, S_2, \ldots , S_k$ is a \textbf{domatic} partition if each set is dominating.  
+ 
+We define $\Tau(n)$ to be the largest $k$ such that $Q_n$ has a domatic partition into $k$ sets.  
+
+For example, $\Tau(3) = 4$, as the vertices of the $3$-dimensional cube can be partitioned into 4 dominating sets, $\{000, 111\}, \{001, 110\}, \{010, 101\}, \{011, 100\}, but not into 5.$
+ 
+The known values of $\Tau(n)$ are below.
+
+\begin{center}
+    \begin{tabular}{ | c | c | }
+    \hline
+     2 & 2 \\ 
+     3 & 4 \\ 
+     4 & 4 \\ 
+     5 & 4 \\ 
+     6 & 5 \\ 
+     7 & 8 \\ 
+     8 & 8 \\ 
+     9 & 8 \\ 
+     10 & (9 or 10) ? \\ 
+    \end{tabular}
+    \end{center}
+
+
+
+This is the OEIS sequence A157887.  
+There is a comment on the OEIS page that says that the domatic number for 10 must be 8 or 9, but I didn't follow the argument, so maybe this has been solved? The initial place I read it claimed that a partition for 9 had been found, but they couldn't rule out 10.  I'll try to track down some references....
+ 
+ 
+Graceful labelings of graphs
+ 
+Label the vertices of a tree from 0 to n-1.   This induces a labelling on the edges : the edge label is the difference between its endpoints.
+A labelling is graceful if the edges are all distinct.
+ 
+Conjecture (Ringel-Kotzig): All trees are graceful (i.e. they admit a graceful labelling).
+ 
+Further, all trees are bipartite, so colour all of the vertices in one part white and the other black.  A graceful colouring is bipartite if for every edge, the black endpoint has a higher number than the white endpoint.
+ 
+Conjecture (Pulleyblank):  All trees admit a bipartite graceful colouring.
+ 
+The specific 81 vertex graph that they hadn't found a labelling (but potentially has been found now, the reference was from 2014) is
+ 
+v1: (1, 2, 6)
+v2: (3, 4, 0)
+v3: (2, 0, 6)
+v4: (4, 3, 5)
+v5: (0, 2, 2, 3)
+v6: ()
+v7: (0, 1, 1, 4, 4)
+ 
+ 
+The first 7 vertices (v1 - v7) are in a path (i.e  v1 ---- v2 ---- v3 ---- v4 --- ...  v7), and the notation v1: (1, 2, 6) means v1 has 3 children, which in turn have 1, 2 and 6 children respectively.  This type of graph is called a 'lobster' graph.
+
+\pagebreak
+
+\section{System Design}
+
+My system worked as follows \ldots
+
+\pagebreak
+
+\section{Evaluation}
+
+We did some experiments \ldots
+
+\pagebreak
+
+\section{Conclusions and Future Work}
+
+From our experiments we can conclude that \ldots
+
+\bibliographystyle{abbrv}
+% \bibliography{references}  % need to put bibtex references in references.bib 
+\end{document}

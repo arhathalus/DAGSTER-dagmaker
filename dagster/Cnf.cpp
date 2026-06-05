@@ -318,7 +318,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp)==NULL)
@@ -421,7 +421,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp, const vector<int> &indices) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp)==NULL)
@@ -543,7 +543,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp, RangeSet &set_indices) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp) == NULL)

@@ -1,4 +1,3 @@
-
 # Dagster - a Distributed Hybrid SAT Solver
 
 Dagster is a C++ implementation of a parallel decision procedure to solve Boolean SAT(isfiability) and #SAT problems.
@@ -297,6 +296,4 @@ CDCL - Conflict-Driven Clause Learning, an enhancement of the Davis–Putnam–L
 gNovelty+ - A greedy dynamic local search, that uses the 'novelty+' heuristic to escape from local minima. Important related systems are probSAT and Sparrow. 
 
 PDDL - Planning Domain Definition Language
-
-
 

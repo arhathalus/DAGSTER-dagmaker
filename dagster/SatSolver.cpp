@@ -637,7 +637,10 @@ int SatSolver::get_suggestion() {
   int dLevelIndex = tier * decision_interval;
   if ((decisions % decision_interval == 0) && (processDLevel[currentSLS] != dLevelIndex)) {
     // if we are on the tier marker, and currentSLS not on this marker, setup the SLS process for this decision level
-    processDLevel[currentSLS] = dLevel;
+    // NB: must store dLevelIndex (the tier marker we compare against above), not
+    // dLevel; storing dLevel left this guard permanently true, re-sending the
+    // prefix to the SLS helper on every call (prefix-spam livelock in -m 1).
+    processDLevel[currentSLS] = dLevelIndex;
     int prefixLength = 0;
     int currentIndex = 0;
     // load the solved literals into the prefix buffer

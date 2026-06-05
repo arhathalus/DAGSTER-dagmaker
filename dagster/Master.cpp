@@ -181,8 +181,9 @@ vector<Message*> Master::loop(const char* checkpoint_file) {
       if (organiser->workers[source_worker-1].assigned != NULL) {
         stats->register_finish(source_worker-1);
         VLOG(4) << "MASTER: timing message for node " << organiser->workers[source_worker-1].assigned->to << " took " << (clock() - organiser->workers[source_worker-1].assigned->time_start)*1.0/CLOCKS_PER_SEC;
-        delete organiser->workers[source_worker-1].assigned;
-        organiser->remove_message(organiser->workers[source_worker-1].assigned);
+        Message* finished = organiser->workers[source_worker-1].assigned;
+        organiser->remove_message(finished);  // remove before delete (no freed-pointer use)
+        delete finished;
       }
       organiser->workers[source_worker-1].polled = true;
       
@@ -198,12 +199,14 @@ vector<Message*> Master::loop(const char* checkpoint_file) {
           if (organiser->workers[source_worker-1].assigned != NULL) {
             subgraph_finished.insert(cnf_holder->dag->subgraph_index[m->to]);
             int i=0;
-            delete organiser->workers[source_worker-1].assigned;
-            organiser->remove_message(organiser->workers[source_worker-1].assigned);
+            Message* fin = organiser->workers[source_worker-1].assigned;
+            organiser->remove_message(fin);  // remove before delete
+            delete fin;
             while (i<organiser->message_buffer.length) {
               if (cnf_holder->dag->subgraph_index[organiser->message_buffer[i]->to] == cnf_holder->dag->subgraph_index[m->to]) {
-                delete organiser->message_buffer[i];
-                organiser->remove_message(organiser->message_buffer[i]);
+                Message* mb = organiser->message_buffer[i];
+                organiser->remove_message(mb);  // remove before delete; swaps last into i
+                delete mb;
               } else {
                 i++;
               }
