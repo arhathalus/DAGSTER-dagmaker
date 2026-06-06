@@ -51,7 +51,8 @@
  ../minisat/utils/ParseUtils.h ../minisat/core/SolverTypes.h \
  ../minisat/mtl/Map.h ../minisat/mtl/Alloc.h ../mpi_global.h \
  /home/tim/dagster/dagster/minisat_solver/../mpi_global.h \
- ../minisat/core/Solver.h
+ ../minisat/core/Solver.h \
+ /home/tim/dagster/dagster/minisat_solver/../SlsChannel.h
 /home/tim/dagster/dagster/minisat_solver/SimpSolver.o /home/tim/dagster/dagster/minisat_solver/SimpSolver.or /home/tim/dagster/dagster/minisat_solver/SimpSolver.od /home/tim/dagster/dagster/minisat_solver/SimpSolver.op: /home/tim/dagster/dagster/minisat_solver/SimpSolver.cc \
  ../minisat/mtl/Sort.h ../minisat/mtl/Vec.h ../minisat/mtl/IntTypes.h \
  ../minisat/mtl/XAlloc.h \

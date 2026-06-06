@@ -28,6 +28,7 @@ If not, see <http://www.gnu.org/licenses/>.
 #include <stdlib.h>
 
 #include "mpi_global.h"
+#include "SlsChannel.h"
 #include <algorithm>
 #include <functional>
 #include <glog/logging.h>
@@ -433,10 +434,7 @@ this->decisions = 0;
   this->short_stopping = short_stopping;
   this->sls_solution_count = 0;
   this->sls_novel_solution_count = 0;
-  onGoingGet = false;
-  currentSuggestion = 0;
-  currentSuggestionBuffer = 0;
-  currentSLS = 0;
+  this->sls_channel = NULL;
   nVars = 0;
   nextVar = 0;
   nextClause = clauses.size() - 1;
@@ -492,30 +490,16 @@ this->decisions = 0;
   }
   unit_conflicts.clear();
 
-  //get the world size as numSLSProcesses, then minus one
-  if (communicator_sls != NULL) {
-    MPI_Comm_size(*communicator_sls, &numSLSProcesses);
-    numSLSProcesses--;
-  } else
-    numSLSProcesses = 0;
-  // holder for the depth of SLS process i, initially allocate to -1
-  TEST_NOT_NULL(processDLevel = (int *)calloc(numSLSProcesses, sizeof(int)))
-  for (int i = 0; i < numSLSProcesses; i++)
-    processDLevel[i] = -1;
-
-  // load up suggestion holding structure, consists of 2 buffers which are alternated
-  TEST_NOT_NULL(suggestions = (int **)calloc(2, sizeof(int *)))
-  TEST_NOT_NULL(suggestions[0] = (int *)calloc(suggestion_size, sizeof(int)))
-  TEST_NOT_NULL(suggestions[1] = (int *)calloc(suggestion_size, sizeof(int)))
-
-  // allocate prefix block to send to SLS instances
+  // allocate the prefix block built from vars[] and handed to the channel
   TEST_NOT_NULL(prefix = (int *)calloc(vc + 1, sizeof(int)))
 
-  int *dummy;
-  if (numSLSProcesses > 0)
-    MPI_Win_allocate(0, sizeof(int), MPI_INFO_NULL, *communicator_sls, &dummy, &window);
-  
-  sls_solution_request = NULL;
+  // COLLECTIVE: construct the SLS channel in lockstep with the gnovelty helpers
+  // (its constructor performs the collective MPI_Win_allocate). The channel owns
+  // the window, suggestion double-buffer, per-helper depths and solution receive.
+  if (communicator_sls != NULL)
+    sls_channel = new SlsChannel(communicator_sls, suggestion_size, cnf_holder->max_vc + 2);
+  else
+    sls_channel = NULL;
 }
 
 
@@ -523,28 +507,15 @@ this->decisions = 0;
 
 
 SatSolver::~SatSolver() {
-  if (numSLSProcesses>0)
-    VLOG(5) << "signalling completion to SLS";
-  // send a prefix length 0 to each process, informing them of completion
-  int dummy = 0;
-  for (int i = 1; i <= numSLSProcesses; i++)
-    MPI_Send(&dummy, 0, MPI_INT, i, PREFIX_TAG, *communicator_sls);
-  if (numSLSProcesses > 0) {
-    if (onGoingGet) 
-      MPI_Win_unlock(lockedSLS, window);
-    MPI_Win_free(&window);
-  }
-  if (sls_solution_request != NULL) {
-    MPI_Cancel(&sls_solution_request);
-  }
+  // The channel's destructor sends the length-0 completion prefix to each
+  // gnovelty helper, closes any open RMA epoch, frees the collective window and
+  // cancels its solution receive (all previously inline here).
+  if (sls_channel != NULL)
+    delete sls_channel;
   if (sls_solution_count > 0)
     VLOG(1) << " SLS found " << sls_solution_count << " solutions (" << sls_novel_solution_count << " novel)";
   free(sls_solution_buffer);
   free(prefix);
-  free(processDLevel);
-  free(suggestions[0]);
-  free(suggestions[1]);
-  free(suggestions);
   if (mpi_buffer != NULL)
     delete mpi_buffer;
 }
@@ -559,64 +530,46 @@ SatSolver::~SatSolver() {
  */
 void SatSolver::backtrack_func(int level) {
   backtrack(level);
-  for (int i = 0; i < numSLSProcesses; i++) {
-    if (processDLevel[i] > level)
-      processDLevel[i] = -1;
-  }
+  if (sls_channel != NULL)
+    sls_channel->backtrack_reset(level);
 }
 
 int SatSolver::sls__get_solutions() {
-  if (communicator_sls == NULL)
+  if (sls_channel == NULL)
     return 0;
-  MPI_Status status;
-  if (sls_solution_request==NULL) {
-    MPI_Irecv(sls_solution_buffer, cnf_holder->max_vc+2, MPI_INT, MPI_ANY_SOURCE, SLS_SOLUTION_TAG, *communicator_sls, &sls_solution_request);
-  }
   VLOG(4) << "checking for solutions from SLS";
-  int incoming = 0;
-  // test whether the async request returns a message
-  auto test_return = MPI_Test(&sls_solution_request, &incoming, &status);
-  if (test_return != MPI_SUCCESS) {
-    throw ConsistencyException("MPI gnovelty recieve solution returned bad error code");
+  // The channel does the (phase-checked) non-blocking receive; it returns the
+  // number of literals of a matching-phase solution (0-terminated in the buffer),
+  // or 0 if nothing arrived. The novelty check + loading stay here because they
+  // touch tinisat's clauses[]/vars[].
+  int recv_size = sls_channel->poll_solution(sls_solution_buffer, (int)sls_solution_buffer_size, phase);
+  if (recv_size <= 0)
+    return false;
+  // check whether the solution is novel (compatible with all clauses, original
+  // and learnt, that this tinisat knows about)
+  bool new_solution = true;
+  for (int c = 0; (c < clauses.size()) && (new_solution); c++) {
+    int size = 0;
+    while (clauses[c][size] != 0) size++;
+    new_solution = new_solution && isClauseOverlap(clauses[c], size, sls_solution_buffer, recv_size);
   }
-  if (incoming) {
-    int recv_count;
-    MPI_Get_count(&status, MPI_INT, &recv_count);
-    if (sls_solution_buffer[recv_count-1]!= phase) { // check if it has a compatable phase
-      VLOG(3) << "received bad phase solution " << sls_solution_buffer[recv_count-1] << " from SLS " << status.MPI_SOURCE << " current phase is "<< phase;
-    } else {
-      VLOG(3) << "received solution from SLS " << status.MPI_SOURCE << " size " << recv_count;
-      // if it has compatable phase, then check whether the solution is actually novel (ie. compatable with all the clauses (original and learnt) that the tinisat knows about)
-      bool new_solution = true;
-      int recv_size = 0;
-      while(sls_solution_buffer[recv_size]!=0) recv_size++;
-      for (int c = 0; (c<clauses.size()) && (new_solution) ; c++) {
-        int size = 0;
-        while(clauses[c][size]!=0) size++;
-        new_solution = new_solution && isClauseOverlap(clauses[c], size, sls_solution_buffer, recv_size);
-      }
-      sls_solution_count++;
-      if (new_solution) { // if it is novel, the load the tinisat with the solution and return 1 to propagate it up the call stack
-        VLOG(2) << "received solution from SLS " << status.MPI_SOURCE << " is novel ";
-        for (int i = 0; i <= vc; i++) // hard reset the SAT solver's variables
-          vars[i].value = _FREE;
-        for (int i = 0; sls_solution_buffer[i]!=0; i++) { // load in from gnovelty
-          int v = sls_solution_buffer[i];
-          if (v > 0) {
-            vars[VAR(v)].value = _POSI;
-          } else if (v < 0) {
-            vars[VAR(v)].value = _NEGA;
-          }
-        }
-        sls_novel_solution_count++;
-        sls_solution_request=NULL;
-        return true; // found solution
-      } else {
-        VLOG(3) << "received solution from SLS " << status.MPI_SOURCE << " is NOT novel ";
+  sls_solution_count++;
+  if (new_solution) { // if novel, load tinisat with the solution and propagate up
+    VLOG(2) << "received novel solution from SLS";
+    for (int i = 0; i <= vc; i++) // hard reset the SAT solver's variables
+      vars[i].value = _FREE;
+    for (int i = 0; sls_solution_buffer[i] != 0; i++) { // load in from gnovelty
+      int v = sls_solution_buffer[i];
+      if (v > 0) {
+        vars[VAR(v)].value = _POSI;
+      } else if (v < 0) {
+        vars[VAR(v)].value = _NEGA;
       }
     }
-    MPI_Irecv(sls_solution_buffer, cnf_holder->max_vc+2, MPI_INT, MPI_ANY_SOURCE, SLS_SOLUTION_TAG, *communicator_sls, &sls_solution_request);
+    sls_novel_solution_count++;
+    return true; // found solution
   }
+  VLOG(3) << "received solution from SLS is NOT novel";
   return false;
 }
 
@@ -627,7 +580,7 @@ int SatSolver::sls__get_solutions() {
  * is working off the highest-level prefix below the current decision level.
  */
 int SatSolver::get_suggestion() {
-  if (communicator_sls == NULL)
+  if (sls_channel == NULL)
     return 0;
   // number of decisions
   int decisions = dLevel - 1;
@@ -635,85 +588,27 @@ int SatSolver::get_suggestion() {
   int tier = decisions / decision_interval;
   // the depth that marks the beginning of the tier we are on
   int dLevelIndex = tier * decision_interval;
-  if ((decisions % decision_interval == 0) && (processDLevel[currentSLS] != dLevelIndex)) {
-    // if we are on the tier marker, and currentSLS not on this marker, setup the SLS process for this decision level
-    // NB: must store dLevelIndex (the tier marker we compare against above), not
-    // dLevel; storing dLevel left this guard permanently true, re-sending the
-    // prefix to the SLS helper on every call (prefix-spam livelock in -m 1).
-    processDLevel[currentSLS] = dLevelIndex;
+  if ((decisions % decision_interval == 0) &&
+      (sls_channel->processDLevel[sls_channel->currentSLS] != dLevelIndex)) {
+    // On a tier marker with the next helper not yet working it: build the prefix
+    // (the currently-assigned literals) and hand it to that helper. send_prefix
+    // records the depth (even for an empty prefix, so this guard advances) and
+    // only transmits + rotates when there is something to send.
     int prefixLength = 0;
-    int currentIndex = 0;
-    // load the solved literals into the prefix buffer
-    for (int i = 1; i <= vc; i++) {
-      if (vars[VAR(i)].value != _FREE) {
-        prefix[currentIndex] = (vars[VAR(i)].value == _POSI ? 1 : -1) * i;
-        prefixLength++;
-        currentIndex++;
-      }
-    }
-    // if there are solved literals, then send the prefix to the identified SLS and cycle to next currentSLS
-    if (prefixLength > 0) {
-      MPI_Send(prefix, prefixLength, MPI_INT, currentSLS + 1, PREFIX_TAG, *communicator_sls);
-      currentSLS = (currentSLS + 1) % numSLSProcesses;
-    }
+    for (int i = 1; i <= vc; i++)
+      if (vars[VAR(i)].value != _FREE)
+        prefix[prefixLength++] = (vars[VAR(i)].value == _POSI ? 1 : -1) * i;
+    sls_channel->send_prefix(prefix, prefixLength, dLevelIndex);
     return 0;
   }
- 
-  // if the currentSuggestion is at the end of the currentSuggestionBuffer - need to get more suggestions
-  if ((currentSuggestion >= suggestion_size) || (suggestions[currentSuggestionBuffer][currentSuggestion] == 0)) {
-    // Then there are no more suggestions. Try to get some more.
-    int highestDLevelBelowCurrent = 0;
-    int bestSLS = -1;
-    int nextSuggestionBuffer = (currentSuggestionBuffer + 1) % 2;
-    // wipe the currentSuggestionBuffer
-    suggestions[currentSuggestionBuffer][0] = 0;
-    // get the index of the SLS instance with the highest DLevel below our CDCL dLevel (or the smallest SLS Dlevel above our CDCL), as 'bestSLS'
-    for (int i = 0; i < numSLSProcesses; i++) {
-      if (processDLevel[i] > highestDLevelBelowCurrent && processDLevel[i] < dLevel) {
-        highestDLevelBelowCurrent = processDLevel[i];
-        bestSLS = i;
-      }
-    }
-    // if it is not the case that all SLS are at a greater depth than our CDCL and there is a 'bestSLS'
-    // then repopulate the current buffer and switch to the next Suggestion Buffer
-    if (bestSLS >= 0) {
-      if (onGoingGet) { //We already have an ongoing getting process into the backbuffer
-        // free the lock
-        MPI_Win_unlock(lockedSLS, window);
-        // initiate a new get by locking and getting a new suggestion buffer from the SLS
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, bestSLS + 1, MPI_MODE_NOCHECK, window);
-        MPI_Get(suggestions[currentSuggestionBuffer], suggestion_size, MPI_INT, bestSLS + 1, 0, suggestion_size, MPI_INT, window);
-        onGoingGet = true;
-        lockedSLS = bestSLS + 1;
-        // switch to the next suggestion buffer.
-        currentSuggestionBuffer = nextSuggestionBuffer;
-      } else { //We aren't getting any suggestions (practically the first time we run)
-        // get the first suggestion buffer's worth of suggestions
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, bestSLS + 1, MPI_MODE_NOCHECK, window);
-        MPI_Get(suggestions[currentSuggestionBuffer], suggestion_size, MPI_INT, bestSLS + 1, 0, suggestion_size, MPI_INT, window);
-        MPI_Win_unlock(bestSLS + 1, window);
-        // get the second suggestion buffer's worth of suggestions
-        MPI_Win_lock(MPI_LOCK_EXCLUSIVE, bestSLS + 1, MPI_MODE_NOCHECK, window);
-        MPI_Get(suggestions[nextSuggestionBuffer], suggestion_size, MPI_INT, bestSLS + 1, 0, suggestion_size, MPI_INT, window);
-        onGoingGet = true;
-        lockedSLS = bestSLS + 1;
-      }
-      currentSuggestion = 0; // start suggestion index back at zero on the current suggestion buffer.
-    }
-  }
 
-  // while we have more suggestions to process
-  while (currentSuggestion < suggestion_size && suggestions[currentSuggestionBuffer][currentSuggestion] != 0) {
-    // still have more suggestions to try
-    int s = suggestions[currentSuggestionBuffer][currentSuggestion];
-    currentSuggestion++;
-    if (s == 0 || VAR(s) > vc) //if the suggestion does not make sense continue to next one
-      continue;
-    if (vars[VAR(s)].value == _FREE) { // if the suggestion is free, make the suggestion as a literal choice
+  // otherwise return the next suggested literal that is still free. The channel
+  // manages the RMA double-buffer refill from the best helper internally.
+  int s;
+  while ((s = sls_channel->next_suggestion(dLevel)) != 0) {
+    if (VAR(s) <= vc && vars[VAR(s)].value == _FREE)
       return s;
-    }
   }
-
   return 0;
 }
 

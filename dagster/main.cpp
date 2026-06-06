@@ -72,7 +72,10 @@ void process_solution(Dag* dag, Message* m) {
 
 // if mode 0, we dont need to worry about any gnovelty or strengthener stuff
 // and we can proceed with a tested vanilla TinySAT structure, where there is one master and the rest are tinisats.
-vector<Message*> mode_0_execute(WrappedSolutionsInterface *master_implementation) {
+// No SLS, no strengthener: one master + the rest CDCL workers, all using the
+// given backend. Unifies the former modes 0 (tinisat), 4 (minisat), 5 (cadical)
+// and 7 (cryptominisat), which were identical apart from the backend selector.
+vector<Message*> simple_execute(WrappedSolutionsInterface *master_implementation, int backend) {
   MPI_Comm mastercommunicator; //  = MPI_COMM_WORLD;
   vector<Message*> solutions;
   // We are assuming at least 2 processes for this task
@@ -86,7 +89,7 @@ vector<Message*> mode_0_execute(WrappedSolutionsInterface *master_implementation
     auto master = Master(comms,master_implementation,command_line_arguments.ENUMERATE_SOLUTIONS,command_line_arguments.BREADTH_FIRST_NODE_ALLOCATIONS,true,command_line_arguments.checkpoint_frequency);
     solutions = master.loop(command_line_arguments.checkpoint_filename);
   } else { // enter the worker loop otherwise
-    Worker* worker = new Worker(cnf_holder->dag, comms, NULL, NULL, false);
+    Worker* worker = new Worker(cnf_holder->dag, comms, NULL, NULL, backend);
     worker->loop();
     delete worker;
   }
@@ -95,55 +98,6 @@ vector<Message*> mode_0_execute(WrappedSolutionsInterface *master_implementation
 }
 
 
-// if mode 1, make partitions and subcommunicators to glue together gnovelties with HybridSAT solvers
-// need to do some index juggling to figure out which processes should be gnovelties and linked with tinisats
-// mastercommunicator holds the master and the CDCLs
-vector<Message*> mode_1_execute(WrappedSolutionsInterface *master_implementation) {
-  MPI_Comm subcommunicator;
-  MPI_Comm mastercommunicator;
-  MPI_Comm subcommunicator_strengthener;
-  vector<Message*> solutions;
-  // check that we can even boot a master, and one worker, with its allocated novelties
-  if (world_size < 2 + command_line_arguments.novelty_number) {
-    LOG(ERROR) << "World size must be at least enough to support a master, worker and associated gnovelties";
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
-  // enter the master loop if rank zero
-  if (world_rank == 0) {
-    // master process does not have any gNovelty helpers
-    MPI_Comm_split(MPI_COMM_WORLD, MPI_UNDEFINED, 0, &subcommunicator);
-    MPI_Comm_split(MPI_COMM_WORLD, 0, 0, &mastercommunicator);
-    //enter master loop
-    MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
-    auto master = Master(comms,master_implementation,command_line_arguments.ENUMERATE_SOLUTIONS,command_line_arguments.BREADTH_FIRST_NODE_ALLOCATIONS,true,command_line_arguments.checkpoint_frequency);
-    solutions = master.loop(command_line_arguments.checkpoint_filename);
-    delete comms;
-  } else { // else we are a worker of some kind.
-    int num_procs_per_hybrid_group = 1 + command_line_arguments.novelty_number;
-    int hybrid_group_num = (world_rank - 1) / num_procs_per_hybrid_group;
-    int index_in_hybrid_group = (world_rank - 1) % num_procs_per_hybrid_group;
-    if ((hybrid_group_num + 1) * num_procs_per_hybrid_group >= world_size) { // if we have an underfull final group then merge it into the previous one, to create an overfull group
-      hybrid_group_num--;
-      index_in_hybrid_group += 1 + (command_line_arguments.novelty_number);
-    }
-    MPI_Comm_split(MPI_COMM_WORLD, hybrid_group_num, index_in_hybrid_group, &subcommunicator);
-    if (index_in_hybrid_group == 0) {
-      // we are the controlling process of a HybridSatSolver group
-      MPI_Comm_split(MPI_COMM_WORLD, 0, hybrid_group_num + 1, &mastercommunicator);
-      MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
-      Worker* worker = new Worker(cnf_holder->dag, comms, &subcommunicator, NULL);
-      worker->loop(); // enter the worker loop
-      delete comms;
-      delete worker;
-    } else {
-      // we are a gNovelty helper process
-      MPI_Comm_split(MPI_COMM_WORLD, MPI_UNDEFINED, 0, &mastercommunicator);
-      // dump the process into gnovelty_main with the appropriate subcommunicator, and hope everything works >_<
-      gnovelty_main(&subcommunicator, command_line_arguments.suggestion_size, command_line_arguments.advise_scheme, command_line_arguments.dynamic_local_search);
-    }
-  }
-  return solutions;
-}
 
 
 // if mode 2, make partitions and subcommunicators to glue together gnovelties with HybridSAT solvers and a strengthener each
@@ -256,27 +210,50 @@ vector<Message*> mode_3_execute(WrappedSolutionsInterface *master_implementation
 
 
 
-// if mode 0, we dont need to worry about any gnovelty or strengthener stuff
-// and we can proceed with a tested vanilla TinySAT structure, where there is one master and the rest are tinisats.
-vector<Message*> mode_4_execute(WrappedSolutionsInterface *master_implementation) {
-  MPI_Comm mastercommunicator; //  = MPI_COMM_WORLD;
+
+
+// SLS-guided execution: a CDCL worker + gnovelty SLS helpers per hybrid group,
+// parameterised by the CDCL backend (tinisat / minisat / cadical / cryptominisat).
+// The gnovelty helper topology and SLS communicator are independent of the
+// backend; only the Worker's backend changes, routing the helper exchange
+// through that backend's SlsChannel (SatSolver's own SLS path for tinisat).
+// Covers the former modes 1 (tinisat), 6 (cadical), 8 (minisat), 9 (cryptominisat).
+vector<Message*> sls_execute(WrappedSolutionsInterface *master_implementation, int backend) {
+  MPI_Comm subcommunicator;
+  MPI_Comm mastercommunicator;
   vector<Message*> solutions;
-  // We are assuming at least 2 processes for this task
-  if (world_size < 2) {
-    LOG(ERROR) << "World size must be greater than 1";
+  if (world_size < 2 + command_line_arguments.novelty_number) {
+    LOG(ERROR) << "World size must be at least enough to support a master, worker and associated gnovelties";
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
-  MPI_Comm_split(MPI_COMM_WORLD, 0, world_rank, &mastercommunicator);
-  MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
-  if (world_rank == 0) { // enter the master loop if rank zero
+  if (world_rank == 0) {
+    MPI_Comm_split(MPI_COMM_WORLD, MPI_UNDEFINED, 0, &subcommunicator);
+    MPI_Comm_split(MPI_COMM_WORLD, 0, 0, &mastercommunicator);
+    MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
     auto master = Master(comms,master_implementation,command_line_arguments.ENUMERATE_SOLUTIONS,command_line_arguments.BREADTH_FIRST_NODE_ALLOCATIONS,true,command_line_arguments.checkpoint_frequency);
     solutions = master.loop(command_line_arguments.checkpoint_filename);
-  } else { // enter the worker loop otherwise
-    Worker* worker = new Worker(cnf_holder->dag, comms, NULL, NULL, true);
-    worker->loop();
-    delete worker;
+    delete comms;
+  } else {
+    int num_procs_per_hybrid_group = 1 + command_line_arguments.novelty_number;
+    int hybrid_group_num = (world_rank - 1) / num_procs_per_hybrid_group;
+    int index_in_hybrid_group = (world_rank - 1) % num_procs_per_hybrid_group;
+    if ((hybrid_group_num + 1) * num_procs_per_hybrid_group >= world_size) {
+      hybrid_group_num--;
+      index_in_hybrid_group += 1 + (command_line_arguments.novelty_number);
+    }
+    MPI_Comm_split(MPI_COMM_WORLD, hybrid_group_num, index_in_hybrid_group, &subcommunicator);
+    if (index_in_hybrid_group == 0) {
+      MPI_Comm_split(MPI_COMM_WORLD, 0, hybrid_group_num + 1, &mastercommunicator);
+      MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
+      Worker* worker = new Worker(cnf_holder->dag, comms, &subcommunicator, NULL, backend);
+      worker->loop();
+      delete comms;
+      delete worker;
+    } else {
+      MPI_Comm_split(MPI_COMM_WORLD, MPI_UNDEFINED, 0, &mastercommunicator);
+      gnovelty_main(&subcommunicator, command_line_arguments.suggestion_size, command_line_arguments.advise_scheme, command_line_arguments.dynamic_local_search);
+    }
   }
-  delete comms;
   return solutions;
 }
 
@@ -332,20 +309,52 @@ int main(int argc, char **argv) {
 
   }
 
-  // enter into respective mode
-  vector<Message*> solutions;
-  if (command_line_arguments.mode == 0) {
-    solutions = mode_0_execute(master_implementation);
-  } else if (command_line_arguments.mode == 1) {
-    solutions = mode_1_execute(master_implementation);
-  } else if (command_line_arguments.mode == 2) {
-    solutions = mode_2_execute(master_implementation);
-  } else if (command_line_arguments.mode == 3) {
-    solutions = mode_3_execute(master_implementation);
-  } else if (command_line_arguments.mode == 4) {
-    solutions = mode_4_execute(master_implementation);
+  // Resolve the run configuration into (backend, sls, strengthen). The orthogonal
+  // --backend/--sls/--strengthen flags are preferred; if none is supplied we fall
+  // back to the legacy numeric -m selector (kept for backward compatibility).
+  int backend = BACKEND_TINISAT;
+  bool sls = false, strengthen = false;
+  bool flags_used = (!command_line_arguments.backend.empty())
+                    || (command_line_arguments.use_sls != -1)
+                    || (command_line_arguments.use_strengthen != -1);
+  if (flags_used) {
+    const std::string& b = command_line_arguments.backend;
+    if (b.empty() || b == "tinisat")            backend = BACKEND_TINISAT;
+    else if (b == "minisat")                    backend = BACKEND_MINISAT;
+    else if (b == "cadical")                    backend = BACKEND_CADICAL;
+    else if (b == "cryptominisat" || b == "cms") backend = BACKEND_CRYPTOMINISAT;
+    else throw BadParameterException("unknown --backend (use tinisat|minisat|cadical|cryptominisat)");
+    sls = (command_line_arguments.use_sls == 1);
+    strengthen = (command_line_arguments.use_strengthen == 1);
   } else {
-    throw BadParameterException("Dagster called with non existant mode");
+    switch (command_line_arguments.mode) {       // legacy -m mapping
+      case 0: backend = BACKEND_TINISAT; break;
+      case 1: backend = BACKEND_TINISAT; sls = true; break;
+      case 2: backend = BACKEND_TINISAT; sls = true; strengthen = true; break;
+      case 3: backend = BACKEND_TINISAT; strengthen = true; break;
+      case 4: backend = BACKEND_MINISAT; break;
+      case 5: backend = BACKEND_CADICAL; break;
+      case 6: backend = BACKEND_CADICAL; sls = true; break;
+      case 7: backend = BACKEND_CRYPTOMINISAT; break;
+      case 8: backend = BACKEND_MINISAT; sls = true; break;
+      case 9: backend = BACKEND_CRYPTOMINISAT; sls = true; break;
+      default: throw BadParameterException("Dagster called with non existant mode");
+    }
+  }
+  // The clause-strengthening reducer is currently wired for the tinisat backend only.
+  if (strengthen && backend != BACKEND_TINISAT)
+    throw BadParameterException("--strengthen is currently only supported with the tinisat backend");
+
+  // enter into the respective execution path
+  vector<Message*> solutions;
+  if (strengthen && sls) {
+    solutions = mode_2_execute(master_implementation);          // tinisat + SLS + strengthener
+  } else if (strengthen) {
+    solutions = mode_3_execute(master_implementation);          // tinisat + strengthener
+  } else if (sls) {
+    solutions = sls_execute(master_implementation, backend);    // any backend + SLS helpers
+  } else {
+    solutions = simple_execute(master_implementation, backend); // any backend, no helpers
   }
   
   // dump found solutions to output file

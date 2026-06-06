@@ -44,6 +44,10 @@ Arguments::Arguments() { // all the default arguments
   heuristic_rotation_scheme = "";
   BDD_compilation_scheme = "";
   mode=0;
+  backend = "";
+  use_sls = -1;
+  use_strengthen = -1;
+  inprocess = "";
   decision_interval = 30;
   suggestion_size = 30;
   dynamic_local_search = 0;
@@ -67,6 +71,13 @@ Arguments::Arguments() { // all the default arguments
   minisat_incrementality_mode = 0;
 }
 
+// long-only option keys (values above the printable-char range so argp treats
+// them as having no short form)
+#define OPT_BACKEND    1001
+#define OPT_SLS        1002
+#define OPT_STRENGTHEN 1003
+#define OPT_INPROCESS  1004
+
 static char doc[] = "Uses MPI to spawn SAT solvers working on different parts of a problem\nneed to specify a CNF file and associated DAG structure\nsee documenation for specifications.";
 static char args_doc[] = "DAG_FILE CNF_FILE";
 static struct argp_option options[] = { 
@@ -82,8 +93,12 @@ static struct argp_option options[] = {
   { "sat reporting time", 'j', "sat_reporting_time", 0, "the number of decisions that the CDCL will make before asking master for a possible reassignment"},
   { "number of gnovelties per solver", 'k', "novelty_number", 0, "number of gnovelties per sat solver (only in gnovelty mode)"},
   { "gnovelty solution checking time", 'l', "gnovelty_solution_checking_time", 0, "the number decsions that the CDCL will make before checking for a solution from gnovelties"},
-  { "MODE", 'm', "MODE", 0, "The mode of dagster operation, defult is no gnovelty, specified is with gnovelty"},
-  
+  { "MODE", 'm', "MODE", 0, "Legacy numeric operation selector (0-9). Prefer --backend/--sls/--strengthen."},
+  { "backend", OPT_BACKEND, "BACKEND", 0, "CDCL backend: tinisat (default) | minisat | cadical | cryptominisat"},
+  { "sls", OPT_SLS, 0, 0, "guide the CDCL search with gNovelty+ SLS helper processes"},
+  { "strengthen", OPT_STRENGTHEN, 0, 0, "run a clause-strengthening reducer process (tinisat backend only)"},
+  { "inprocess", OPT_INPROCESS, "LEVEL", 0, "backend inprocessing aggressiveness: off | light | default | heavy (minisat/cadical/cryptominisat)"},
+
   { "OUTPUT_FILE", 'o', "OUTPUT_FILE", 0, "the filename to be outputted to"},
   { "tinisat restarting", 'p', "tinisat_restarting", 0, "a flag that is set if tinisat is to do restarts in its decision process."},
   { "minist incrementality mode", 'q', "minisat_incrementality_mode", 0, "A mode number that controls how Minisat manages to store learned clauses on the workers between messages, 0=no storage inrementality, 1=only store clauses if the message node does not change, 2=store incremental information of all nodes"},
@@ -157,6 +172,18 @@ static error_t parse_option( int key, char *arg, struct argp_state *state )
     break;
   case 'm':
     PARSE_ARGUMENT(arguments->mode,"-m::mode");
+    break;
+  case OPT_BACKEND:
+    arguments->backend = arg;
+    break;
+  case OPT_SLS:
+    arguments->use_sls = 1;
+    break;
+  case OPT_STRENGTHEN:
+    arguments->use_strengthen = 1;
+    break;
+  case OPT_INPROCESS:
+    arguments->inprocess = arg;
     break;
   case 'o':
     arguments->output_filename = arg;

@@ -61,8 +61,24 @@ struct Arguments {
   // Should the local search heuristic guide use clause weights?
   int dynamic_local_search;
 
-  // Should the CDCL searches be using local searches as a heuristic guide? 0=no, 1=yes
+  // Legacy numeric operation selector (see main.cpp dispatch). Retained for
+  // backward compatibility; the preferred interface is the orthogonal
+  // --backend/--sls/--strengthen flags below, which this is derived to/from.
   int mode;
+
+  // Orthogonal operation selectors (preferred over -m).
+  //   backend       : "tinisat" | "minisat" | "cadical" | "cryptominisat" ("" = unset)
+  //   use_sls       : guide the CDCL with gNovelty+ SLS helpers (-1 unset / 0 / 1)
+  //   use_strengthen: run a clause-strengthening reducer (-1 unset / 0 / 1)
+  // When any of these is set, they take precedence over -m; otherwise -m is used.
+  std::string backend;
+  int use_sls;
+  int use_strengthen;
+
+  // Aggressiveness of the CDCL backend's own inprocessing (vivify/subsume/probe/
+  // elim): "off" | "light" | "default" | "heavy" ("" = leave backend defaults).
+  // The backend-native counterpart of --strengthen; tinisat ignores it.
+  std::string inprocess;
 
   // If the CDCL searches are using a local search guide, how many decisions should they make between communications with the local search?
   int decision_interval;

@@ -30,6 +30,9 @@ If not, see <http://www.gnu.org/licenses/>.
 
 #include "SatSolverInterface.h"
 
+// CDCL backend selector for the Worker (value of the `backend` field / ctor arg)
+enum DagsterBackend { BACKEND_TINISAT = 0, BACKEND_MINISAT = 1, BACKEND_CADICAL = 2, BACKEND_CRYPTOMINISAT = 3 };
+
 // Worker class:
 // holds data relevent to worker loop, and the worker loop itself.
 class Worker {
@@ -40,19 +43,19 @@ public:
   SatSolverInterface** solvers;
   Cnf* generated_cnf; // pointer to CNF that the SAT solver is working on
   int phase; // phase counter, for each message the worker sends to the gnovelties/strengthener send a new 'phase' and disregard any messages that are from old phases
-  bool minisat_mode; // flag to set minisat instead of tinisat CDCL
-  
+  int backend; // CDCL backend: 0=tinisat (SatSolver), 1=minisat, 2=cadical
+
   MPI_Comm *communicator_sls; // communicator for talking to the gnovelties
   MPI_Comm *communicator_strengthener; // communicator for talking to the strengthener
   
   int message_index; // the index of the message that the worker has/is working on
 
-  Worker(Dag* dag, MPICommsInterface* comms, MPI_Comm* communicator_sls, MPI_Comm* communicator_strengthener, bool minisat_mode=false) {
+  Worker(Dag* dag, MPICommsInterface* comms, MPI_Comm* communicator_sls, MPI_Comm* communicator_strengthener, int backend=0) {
     this->dag = dag;
     this->comms = comms;
     this->communicator_sls = communicator_sls;
     this->communicator_strengthener = communicator_strengthener;
-    this->minisat_mode = minisat_mode;
+    this->backend = backend;  // true (from mode 4) implicitly converts to 1 = minisat
     this->solver_index = 0;
     this->phase = 0;
     this->generated_cnf = NULL;

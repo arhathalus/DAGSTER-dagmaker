@@ -26,6 +26,7 @@ If not, see <http://www.gnu.org/licenses/>.
 
 #include "CnfManager.h"
 #include "strengthener/MpiBuffer.h"
+class SlsChannel;  // SLS (gnovelty+) guidance channel; defined in SlsChannel.h
 #include <deque>
 #include <functional>
 #include <ostream>
@@ -102,8 +103,6 @@ private:
   int phase;
   MPI_Comm *communicator_sls;
   MPI_Comm *communicator_strengthener;
-  
-  MPI_Request sls_solution_request;
 
 public:
 
@@ -113,24 +112,20 @@ public:
 
   void add_arbitrary_clause(int *inClauseArray, int inClauseLength, int inClauseLitPool, int inClauseLitPoolPos);
 
-  int numSLSProcesses;  // total number of SLS processes
-  int *processDLevel;
-  int currentSLS;        // next SLS process to assign
-  int **suggestions;     // list of suggestions received from SLS
-  int currentSuggestion; // index of current suggestion to try
+  // The reusable SLS (gnovelty+) guidance channel. NULL when there are no SLS
+  // helpers. Owns the collective RMA window, the suggestion double-buffer, the
+  // per-helper prefix depths (processDLevel) and round-robin (currentSLS), and
+  // the SLS-found-solution receive. Previously these were inline members here;
+  // they now live in SlsChannel and are shared with the CaDiCaL/MiniSat/CMS
+  // backends (see SlsChannel.h).
+  SlsChannel* sls_channel;
 
   // The CDCL search is a backtracking search that explores a
   // binary tree according to some heuristic. At any given point
   // of the search, the "prefix" is the set of decisions that
-  // lead to the bit of tree being explored at that point.
+  // lead to the bit of tree being explored at that point. Built here from
+  // vars[] and handed to the channel via send_prefix().
   int *prefix;
-
-  // index of the suggestion we are on
-  int currentSuggestionBuffer;
-  // the boolean flag indicating whether an ongoing window suggestion buffer get is in progress (actually functions as a flag to get both buffers worth of suggestions)
-  bool onGoingGet;
-  // the rank of the SLS process that we are currently getting the window for suggestion data from
-  int lockedSLS;
 
   // Number of assignments to variables---i.e. suggestions---that are
   // transmitted as advice from a gnovelty+ search instance
@@ -155,9 +150,6 @@ public:
 
   SatSolver(Cnf* cnf, int decision_interval, int suggestion_size, MPI_Comm *communicator_sls, MPI_Comm *communicator_strengthener, bool pure_literal_assertion, bool short_stopping, string &heuristic_rotation_scheme, int phase);
   ~SatSolver();
-
-  MPI_Win window;
-  MPI_Win solution_window;
 
   bool solver_add_conflict_clause(std::deque<int>);
   bool reset_solver();

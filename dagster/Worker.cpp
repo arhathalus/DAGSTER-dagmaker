@@ -40,6 +40,8 @@ If not, see <http://www.gnu.org/licenses/>.
 #include "CnfHolder.h"
 #include "exceptions.h"
 #include "minisat_solver/minisat_solver.h"
+#include "cadical_solver/CadicalSolver.h"
+#include "cryptominisat_solver/CryptominisatSolver.h"
 
 extern CnfHolder* cnf_holder;
 extern Arguments command_line_arguments;
@@ -105,7 +107,12 @@ generate_new_result:
         if ((!reset_solver_for_next_solution(m2)) || (command_line_arguments.ENUMERATE_SOLUTIONS==3)) { // request for assignment if finished, or if enumerate_solutions mode 3 - assuming only one solution to each dag node message
           VLOG(3) << "WORKER " << comms->world_rank << ": finished generating new solutions, sending assignment request";
           comms->send_tag(0, MPI_TAG_REQUEST_FOR_ASSIGNMENT);
-        } else if (solution_count >= command_line_arguments.sat_solution_interrupt) {
+        } else if (solution_count >= ((command_line_arguments.ENUMERATE_SOLUTIONS == 0)
+                                      ? 1 : command_line_arguments.sat_solution_interrupt)) {
+          // race-to-first (-e 0): poll the master after the very first solution so
+          // it can terminate/reassign immediately, instead of locally enumerating
+          // up to sat_solution_interrupt (=100) solutions first. Enumerate modes
+          // keep the larger batching interval for throughput.
           VLOG(3) << "WORKER " << comms->world_rank << ": sending poll request due to solution count";
           comms->send_tag(0, MPI_TAG_POLL_FOR_REASSIGNMENT);
         } else
@@ -169,9 +176,31 @@ void Worker::initialise_solver_from_message(Message* m) {
   if (generated_cnf!=NULL)
     delete generated_cnf;
   generated_cnf = cnf_holder->compile_Cnf_from_Message(m); // from the given message compile a new cnf for the Tinisat to run
-  
-  // delete solver instance
-  if (minisat_mode) {
+
+  // Parse the backend inprocessing aggressiveness (--inprocess). Passed to the
+  // backend constructors because CaDiCaL only accepts option changes before any
+  // clause is added (CONFIGURING state); tinisat ignores it.
+  const std::string& ip = command_line_arguments.inprocess;
+  int inprocess_level = INPROCESS_UNSET;
+  if      (ip == "off")     inprocess_level = INPROCESS_OFF;
+  else if (ip == "light")   inprocess_level = INPROCESS_LIGHT;
+  else if (ip == "default") inprocess_level = INPROCESS_DEFAULT;
+  else if (ip == "heavy")   inprocess_level = INPROCESS_HEAVY;
+  else if (!ip.empty())
+    VLOG(1) << "unknown --inprocess '" << ip << "' (use off|light|default|heavy); leaving backend defaults";
+
+  // delete solver instance.
+  // CaDiCaL under SLS (-m 6) is NOT kept incremental: its SlsChannel allocates a
+  // COLLECTIVE window per message that must pair 1:1 with the gnovelty helpers'
+  // per-filename window, so it is rebuilt every message exactly like SatSolver.
+  // All incremental backends keep a per-node solver -- EXCEPT under SLS, where the
+  // SlsChannel's collective window must pair 1:1 with the gnovelty helpers' per
+  // -message window, so the solver is rebuilt every message (like SatSolver).
+  bool incremental_backend = (communicator_sls == NULL) &&
+                             (backend == BACKEND_MINISAT ||
+                              backend == BACKEND_CRYPTOMINISAT ||
+                              backend == BACKEND_CADICAL);
+  if (incremental_backend) {  // incremental backends: per-node slots
     if (command_line_arguments.minisat_incrementality_mode==1) {
       if (solver_index != m->to) {
         if (solvers[solver_index] != NULL) {
@@ -187,8 +216,10 @@ void Worker::initialise_solver_from_message(Message* m) {
     }
     solver_index = m->to;
   } else {
-    if (solvers[solver_index] != NULL) // kill existing instance
+    if (solvers[solver_index] != NULL) {// kill existing instance
       delete solvers[solver_index];
+      solvers[solver_index] = NULL;  // force rebuild below (CaDiCaL+SLS checks NULL)
+    }
   }
   
   if (VLOG_IS_ON(5)) {
@@ -228,9 +259,44 @@ void Worker::initialise_solver_from_message(Message* m) {
     free(dehydrated_message);
   }
   
-  if (minisat_mode) {
+  if (backend == BACKEND_CADICAL) {
     if (solvers[solver_index] == NULL) {
-      solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to));
+      if (communicator_sls != NULL) {  // CaDiCaL guided by gnovelty helpers
+        // phase++ matches the phase just stamped into the dehydrated message
+        // sent to the helpers above, so their solutions/suggestions are tagged
+        // consistently (mirrors the SatSolver construction below).
+        solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to),
+            communicator_sls, command_line_arguments.suggestion_size,
+            cnf_holder->max_vc, phase++, inprocess_level);
+      } else {                          // plain incremental CaDiCaL
+        solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
+      }
+    }
+    if (m->additional_clauses != NULL) {
+      solvers[solver_index]->append_cnf(m->additional_clauses);
+    }
+  } else if (backend == BACKEND_MINISAT) {
+    if (solvers[solver_index] == NULL) {
+      if (communicator_sls != NULL) {  // MiniSat guided by gnovelty helpers
+        solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to),
+            communicator_sls, command_line_arguments.suggestion_size,
+            cnf_holder->max_vc, phase++, inprocess_level);
+      } else {                          // plain incremental MiniSat
+        solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
+      }
+    }
+    if (m->additional_clauses != NULL) {
+      solvers[solver_index]->append_cnf(m->additional_clauses);
+    }
+  } else if (backend == BACKEND_CRYPTOMINISAT) {
+    if (solvers[solver_index] == NULL) {
+      if (communicator_sls != NULL) {  // CryptoMiniSat with gnovelty helpers
+        solvers[solver_index] = new CryptominisatSolver(cnf_holder->get_Cnf(m->to),
+            communicator_sls, command_line_arguments.suggestion_size,
+            cnf_holder->max_vc, phase++, inprocess_level);
+      } else {                          // plain incremental CryptoMiniSat
+        solvers[solver_index] = new CryptominisatSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
+      }
     }
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
