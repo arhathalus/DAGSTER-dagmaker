@@ -357,5 +357,74 @@ class TestGoldenSudoku(unittest.TestCase):
         self.assertEqual(covered, set(range(cnf.n_clauses)))
 
 
+class TestSymBreak(unittest.TestCase):
+    """BreakID integration. Skipped if the binary isn't built."""
+
+    def _breakid_available(self):
+        from dagmaker import symbreak
+        return symbreak.available()
+
+    def test_break_and_normalize(self):
+        from dagmaker import symbreak
+        if not self._breakid_available():
+            self.skipTest("BreakID binary not built")
+        # a symmetric CNF: two independent "exactly-one-of-three" blocks
+        clauses = [[1, 2, 3], [-1, -2], [-1, -3], [-2, -3],
+                   [4, 5, 6], [-4, -5], [-4, -6], [-5, -6]]
+        cnf_in = write_cnf(clauses, 6)
+        cnf_out = tempfile.mktemp(suffix=".cnf")
+        res = symbreak.run_symbreak(cnf_in, cnf_out, level="full")
+        self.assertIsNotNone(res)
+        self.assertGreater(res.num_generators, 0)        # symmetry detected
+        self.assertGreater(res.clauses_added, 0)         # breaking clauses added
+        # the normalisation invariant dagster's parser depends on: every clause
+        # has distinct literals and no clause is a tautology.
+        idx = CnfIndex.from_file(cnf_out)
+        cls = preprocess.read_dimacs(cnf_out)[0]
+        for cl in cls:
+            self.assertEqual(len(cl), len(set(cl)), "duplicate literal in %r" % cl)
+            for l in cl:
+                self.assertNotIn(-l, set(cl), "tautological clause %r" % cl)
+        os.remove(cnf_in)
+        os.remove(cnf_out)
+
+    def test_level_none_is_noop(self):
+        from dagmaker import symbreak
+        self.assertIsNone(symbreak.run_symbreak("x.cnf", "y.cnf", level="none"))
+
+    def test_dag_aware_filter_keeps_local_drops_crossnode(self):
+        from dagmaker import symbreak
+        if not self._breakid_available():
+            self.skipTest("BreakID binary not built")
+        # 4 identical "exactly-one-of-3" blocks: within-block S3 (local) +
+        # block-interchange (global). vars: block i -> {3i+1, 3i+2, 3i+3}.
+        k, sz = 4, 3
+        clauses = []
+        for i in range(k):
+            vs = [i * sz + j + 1 for j in range(sz)]
+            clauses.append(vs[:])
+            for a in range(sz):
+                for b in range(a + 1, sz):
+                    clauses.append([-vs[a], -vs[b]])
+        cnf_in = write_cnf(clauses, k * sz)
+        raw = tempfile.mktemp(suffix=".cnf")
+        out = tempfile.mktemp(suffix=".cnf")
+        symbreak.run_symbreak(cnf_in, raw, level="full", normalize=False)
+        # node var sets = one node per block (the natural decomposition)
+        node_var_sets = [set(range(i * sz + 1, i * sz + sz + 1)) for i in range(k)]
+        res = symbreak.filter_local_breaking(raw, out, len(clauses), k * sz, node_var_sets)
+        # some breaking happened, and DAG-aware kept a strict subset (dropped the
+        # cross-block clauses that would couple the otherwise-parallel blocks)
+        self.assertGreater(res.n_breaking, 0)
+        self.assertGreater(res.n_kept, 0)
+        self.assertGreater(res.n_dropped, 0)
+        self.assertLess(res.n_kept, res.n_breaking)
+        # output is normalised (no duplicate literals -> dagster-parseable)
+        for cl in preprocess.read_dimacs(out)[0]:
+            self.assertEqual(len(cl), len(set(cl)))
+        for p in (cnf_in, raw, out):
+            os.remove(p)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

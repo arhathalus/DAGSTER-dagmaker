@@ -2,6 +2,13 @@
 
 Dagster is a C++ implementation of a parallel decision procedure to solve Boolean SAT(isfiability) and #SAT problems.
 
+> **Start here:**
+> - **[USAGE.md](USAGE.md)** — hand it a CNF and solve it (the turnkey `solve.py` front-end + manual pipeline).
+> - **[ONBOARDING.md](ONBOARDING.md)** — full capability map, where everything lives, how to drive it, roadmap (for a developer/LLM picking this up).
+> - **[HPC_RUN.md](HPC_RUN.md)** — the benchmark run plan (emit SLURM arrays + collect results).
+>
+> The sections below are the original reference (build, options, DAG format, glossary).
+
 [![Dagster Tutorials](https://img.youtube.com/vi/U2a-MZq7JB4/hqdefault.jpg)](https://www.youtube.com/@markburgess3860)
 
 ## Papers
@@ -161,6 +168,16 @@ The command-line invocation of Dagster has a number of options, the most importa
  - `-m 2` : solving units consist of a CDCL process, one or more SLS processes (given by `k` parameter), and a separate CDCL procedure for clause minimization.
  - `-m 3` : solving units consist of a CDCL process, and a separate CDCL procedure for clause minimization.
  - `-m 4` : solving units consist of a single process running a CDCL SAT solving procedure - specifically the MiniSAT procedure.
+ - `-m 5` : CaDiCaL backend (recommended modern CDCL; incremental, keeps learned clauses across solves).
+ - `-m 6` : CaDiCaL assisted by one or more SLS processes (the `k` parameter).
+ - `-m 7` : CryptoMiniSat backend.
+ - `-m 8` / `-m 9` : MiniSat / CryptoMiniSat assisted by SLS processes.
+ - `-m 10` : CaDiCaL **cube-and-conquer with clause sharing** — one rank becomes a hub that relays learned clauses between conquer workers. Use with `--cubes` (see `utilities/cube/README.md`). Needs >= 3 ranks (master + worker + hub).
+
+The orthogonal flags `--backend {tinisat,minisat,cadical,cryptominisat}`, `--sls`,
+`--strengthen`, `--share`, and `--inprocess {off,light,default,heavy}` are the
+preferred way to select these configurations; the numeric `-m` selector is kept
+for backward compatibility.
 
 An example invocation with these options is:
 

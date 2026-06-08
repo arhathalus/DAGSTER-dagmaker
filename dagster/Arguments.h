@@ -75,10 +75,33 @@ struct Arguments {
   int use_sls;
   int use_strengthen;
 
+  // Clause sharing (cube-and-conquer, CaDiCaL only): dedicate one rank as a hub
+  // that relays learned clauses between conquer workers. -1 unset / 0 / 1.
+  int use_share;
+
+  // DRAT proof emission (CaDiCaL only): each worker writes a checkable UNSAT proof
+  // to <proof_filename>.<rank>. NULL = off. Intended for a single-node UNSAT solve
+  // (no enumeration/sharing); see utilities/cube/PROOF_SCOPE.md.
+  char* proof_filename;
+  // Max length of a learned clause exported to the hub (the main quality/volume
+  // knob; the MpiBuffer transport also requires length >= 3).
+  int clause_share_max_size;
+
   // Aggressiveness of the CDCL backend's own inprocessing (vivify/subsume/probe/
   // elim): "off" | "light" | "default" | "heavy" ("" = leave backend defaults).
   // The backend-native counterpart of --strengthen; tinisat ignores it.
   std::string inprocess;
+
+  // Path to a libipasir<solver>.so for --backend ipasir (any IPASIR-compliant
+  // solver, loaded at run time via dlopen). --backend glucose defaults it to the
+  // vendored Glucose build.
+  std::string ipasir_lib;
+
+  // Cube-and-conquer: path to a march-style cube file (lines "a <lits> 0"). When
+  // set, the master seeds the single conquer node (node 0 = the whole formula)
+  // with one message per cube instead of one empty message; workers then solve
+  // the formula under each cube in parallel. NULL = normal (no cubes).
+  char* cubes_filename;
 
   // If the CDCL searches are using a local search guide, how many decisions should they make between communications with the local search?
   int decision_interval;

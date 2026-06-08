@@ -2,19 +2,19 @@
 """Backend-equivalence + regression harness for Dagster's CDCL backends.
 
 Runs a small matrix of (CNF, DAG) instances through each backend
-  -m 0  tinisat (default)
-  -m 4  minisat
-  -m 5  cadical   (the new backend)
+  --backend tinisat (default)
+  --backend minisat
+  --backend cadical   (the new backend)
 and checks:
   1. VERDICT parity   - all backends agree SAT vs UNSAT.
   2. COUNT parity      - with -e 1 (enumerate) the number of solutions matches
                          across backends (the DAG combination is backend-agnostic;
                          note the per-solution *projection* can differ, so we
                          compare counts + validity, not exact solution sets).
-  3. VALIDITY          - every solution reported by -m 5 is consistent with the
-                         CNF (no clause is fully falsified by it) - a stdlib check,
-                         no PySAT dependency.
-  4. DIRECT smoke      - -m 5 on a tiny single-node SAT and UNSAT instance.
+  3. VALIDITY          - every solution reported by --backend cadical is consistent
+                         with the CNF (no clause is fully falsified by it) - a stdlib
+                         check, no PySAT dependency.
+  4. DIRECT smoke      - --backend cadical on a tiny single-node SAT and UNSAT instance.
 
 Exit 0 iff everything passes. Self-contained: writes tiny fixtures to a temp dir.
 """
@@ -42,7 +42,7 @@ def run(mode, dag, cnf, enumerate_all, ranks=2, timeout=60):
     """Return (status, n_solutions, solutions) where status in {SAT,UNSAT,TIMEOUT,ERR}."""
     out = tempfile.mktemp(suffix=".sols")
     cmd = ["mpirun", "-n", str(ranks), "--oversubscribe", "-x", "LD_LIBRARY_PATH",
-           DAGSTER, "-m", str(mode), "-e", "1" if enumerate_all else "0",
+           DAGSTER, "--backend", BACKENDS[mode], "-e", "1" if enumerate_all else "0",
            dag, cnf, "-o", out]
     try:
         p = subprocess.run(cmd, env=ENV, cwd=DAGSTER_DIR, timeout=timeout,
@@ -190,8 +190,8 @@ def main():
         failures += 0 if ok else 1
         print("    => %s" % ("OK" if ok else "FAIL"))
 
-    # ---- direct -m5 smoke ----------------------------------------------
-    print("\ndirect -m5 smoke:")
+    # ---- direct cadical smoke ------------------------------------------
+    print("\ndirect cadical smoke:")
     s_status, _, _ = run(5, os.path.join(tmp, "sat.dag"), os.path.join(tmp, "sat.cnf"), False)
     u_status, _, _ = run(5, os.path.join(tmp, "unsat.dag"), os.path.join(tmp, "unsat.cnf"), True)
     print("  tiny SAT   -> %s (expect SAT)" % s_status)

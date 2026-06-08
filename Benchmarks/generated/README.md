@@ -1,0 +1,104 @@
+# Generated benchmark corpus
+
+CNF instances produced from Dagster's bundled problem generators, each labelled by
+an **independent oracle** — standalone CaDiCaL on the raw CNF, with **no Dagster**
+(no DAG, no cube ingestion, no MPI, no solution projection). Labelling the corpus
+with a tool *other* than the one under test is deliberate: a Dagster bug then shows
+up as a *disagreement* with the label instead of hiding behind it. SAT instances
+also have their full model validated against every clause (`model = ok`).
+
+Everything here is regenerable; the `.cnf`/`.dag`/`.map` blobs are git-ignored, the
+`manifest.tsv` index + this README are tracked.
+
+## Tracks
+
+Every instance is tagged with a **track** describing its purpose:
+
+| track | meaning | use |
+|---|---|---|
+| `known` | verdict settled **and** oracle-confirmed (SAT/UNSAT) | regression test data (known answer) |
+| `hard` | solver-uncertain frontier; the oracle may TIMEOUT | scaling benchmark (run with big cores/timeouts) |
+| `open` | a genuinely **open** mathematical problem | a **Dagster research target** — not labelled |
+
+`dagster/tests/backend_matrix/matrix.py` reads `manifest.tsv` in `real_problems()`
+and uses only **oracle-confirmed SAT/UNSAT** rows as regression data — so `open`
+(verdict `OPEN`) and undecided `hard` (verdict `TIMEOUT`) rows are excluded
+automatically, filtered by the profile's size tier.
+
+## Regenerate / extend
+
+```sh
+cd Benchmarks
+python3 generate_benchmarks.py               # default: known + hard tracks
+python3 generate_benchmarks.py --timeout 120 # raise the oracle cap (hard frontier)
+python3 generate_benchmarks.py --tracks open # materialise the OPEN targets (LARGE — see below)
+```
+
+The driver builds the C generators (costas, ramsey), runs the Python one
+(determinant via the repo `.venv`), writes each instance + its native DAG here,
+then labels it with standalone CaDiCaL. To add instances, edit `SPECS`.
+
+## Families
+
+| family | params | what | shipped verdicts |
+|---|---|---|---|
+| `costas` | N | Costas arrays on N×N (unique pairwise displacements) | SAT |
+| `determinant` | S, B | max-determinant #SAT over an S×S matrix, B bits/entry | SAT |
+| `ramsey` | N, M, Z | **Ramsey/Monk relation-algebra representability** — colour K_N's edges with M colours, no monochromatic triangle, every non-mono triangle everywhere | SAT/UNSAT pairs (known), TIMEOUT (hard) |
+
+### The ramsey family and its open problems
+
+Representability is **known for every colour count n ≤ 120** (strong representability
+up to 2000) **except the open pair n = 8 and n = 13**: cyclic/finite-field
+constructions have been *proven absent* for those two, but whether *any*
+representation exists is open. This generator is a **non-cyclic SAT encoding**, so
+its minimum representations can be *smaller* than the algebraic (cyclic) ones — e.g.
+3 colours are representable on **N = 7** points here vs cyclic p = 13. Measured
+minimum representation sizes (independent oracle): M=2 → N=4, M=3 → N=7, M=4 → ≤11.
+
+The `known` ramsey rows are min/min−1 **pairs** (SAT at the minimum N, UNSAT just
+below — proving minimality), plus a small-N M=8 that is decidedly UNSAT (no small
+8-colour representation).
+
+## OPEN targets — the research prize (M = 8, M = 13)
+
+`--tracks open` materialises the open cases past their refuted range
+(`ramsey_15_8`, `ramsey_14_13`). They are **large** (n=8/N=15 ≈ 32 MB / 1.8M
+clauses; n=13/N=14 ≈ 110 MB / 5.9M clauses), which is why they are generate-on-
+demand rather than part of the default corpus. To attack one with the Dagster
+workflow:
+
+```sh
+python3 generate_benchmarks.py --tracks open          # writes ramsey_15_8.cnf etc.
+python3 utilities/solve.py Benchmarks/generated/ramsey_15_8.cnf --route cube --share --cores N
+# or sweep N upward with the raw generator to find the frontier:
+Benchmarks/ramsey/generate_ramsey_NM -N 16 -M 8 -Z 0 > r16_8.cnf 2> r16_8.map
+```
+
+Interpreting a result:
+- **SAT** at some N ⇒ a brand-new **non-cyclic representation** (the model
+  self-certifies — a real contribution, since cyclic ones are proven absent).
+- **UNSAT** up to N ⇒ a lower bound. To be a *theorem* this needs (a) the
+  generator's symmetry breaking verified verdict-preserving — over-aggressive
+  breaking could give a *false* UNSAT — and (b) a checked **DRAT/LRAT proof**
+  (on the Dagster roadmap, not yet emitted). Treat solver-only UNSAT as evidence,
+  not proof.
+
+## manifest.tsv
+
+Tab-separated, one row per instance:
+
+```
+family  name  params  track  nvars  nclauses  size  verdict  model  seconds  cnf  dag
+```
+
+`verdict` ∈ {SAT, UNSAT, TIMEOUT, OPEN, ERR(n)}; `model` ∈ {ok, INVALID, ""} (SAT
+model validation); `size` ∈ {small, medium, large}; `cnf`/`dag` are repo-root-
+relative. `model = INVALID` would flag a generator/encoding bug (none at present).
+
+## Other bundled generators (not auto-wired)
+
+- **pentomino** — `Benchmarks/Pentomino/pentominos.py`: nested
+  `create … → generate MAP CNF → dag-make …` puzzle pipeline.
+- **gensat** — `Benchmarks/gensat_sat/ggensata2.c` (`build.sh` → `ggen`): random
+  3SAT at a tunable clause/var ratio; verdict only known after solving.

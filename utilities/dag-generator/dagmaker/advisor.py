@@ -3,15 +3,15 @@
 Maps structural features of the DAG (and the CNF) onto dagster's command-line
 options.  Flag semantics are taken from the project README (the source of truth):
 
-  -n   mpirun process count            -m   solving-unit mode (0..4)
-  -k   #SLS helpers (modes 1,2)        -g/-c  BDD solution compilation
+  -n   mpirun process count            --backend/--sls/--strengthen  solving unit
+  -k   #SLS helpers (with --sls)        -g/-c  BDD solution compilation
   -b   breadth(1)/depth(0)-first       -e   enumerate all solutions
 
 Heuristics (each is reported with a one-line rationale so the user can override):
   * parallel width -> number of concurrent solving units -> -n.
   * a large, loosely-constrained (low clause/var ratio) node -> SLS helps
-    (-m 1/2 -k); a tightly-constrained / likely-UNSAT node -> clean CDCL +
-    minimisation (-m 3).
+    (--sls -k); a tightly-constrained / likely-UNSAT node -> clean CDCL +
+    minimisation (--strengthen).
   * an unavoidably wide separator (> bdd_threshold) -> BDD mode (-g 1 -c minisat)
     compresses the 2^k partial-solution set; the offending edge is named.
   * deep chain -> depth-first (-b 0); wide/shallow -> breadth-first (-b 1).
@@ -42,8 +42,15 @@ class Recommendation:
         self.enumerate_all: bool = False
         self.rationale: List[str] = []
 
+    # advisor's internal mode (0..3) -> dagster's orthogonal flag interface.
+    # 0 plain tinisat, 1 +SLS, 2 +SLS+strengthen, 3 +strengthen.
+    _MODE_FLAGS = {0: ["--backend", "tinisat"],
+                   1: ["--backend", "tinisat", "--sls"],
+                   2: ["--backend", "tinisat", "--sls", "--strengthen"],
+                   3: ["--backend", "tinisat", "--strengthen"]}
+
     def command(self, dag_path: str, cnf_path: str, binary: str = "./dagster") -> str:
-        parts = ["mpirun", "-n", str(self.n), binary, "-m", str(self.mode)]
+        parts = ["mpirun", "-n", str(self.n), binary] + self._MODE_FLAGS[self.mode]
         if self.mode in (1, 2) and self.k > 0:
             parts += ["-k", str(self.k)]
         parts += ["-b", str(self.breadth)]
@@ -82,23 +89,23 @@ def advise(model: DagModel, score: Score, cnf=None,
     if ratio is None:
         rec.mode = 2
         rec.k = 1
-        rec.rationale.append("mode 2 (-m 2 -k 1): no var stats; SLS+minimisation is a safe default")
+        rec.rationale.append("mode 2 (--backend tinisat --sls --strengthen -k 1): no var stats; SLS+minimisation is a safe default")
     elif ratio >= TIGHT_RATIO:
         rec.mode = 3
         rec.rationale.append(
-            "mode 3 (-m 3): tightly constrained (clause/var={:.1f}); clean CDCL "
+            "mode 3 (--backend tinisat --strengthen): tightly constrained (clause/var={:.1f}); clean CDCL "
             "with clause minimisation".format(ratio))
     elif big_vars >= 100:
         rec.mode = 1
         rec.k = 2 if big_vars >= 1000 else 1
         rec.rationale.append(
-            "mode 1 (-m 1 -k {}): largest node is big ({} vars) & loosely "
+            "mode 1 (--backend tinisat --sls -k {}): largest node is big ({} vars) & loosely "
             "constrained (clause/var={:.1f}); SLS should find models fast"
             .format(rec.k, big_vars, ratio))
     else:
         rec.mode = 0
         rec.rationale.append(
-            "mode 0 (-m 0): small, loosely-constrained nodes ({} vars, "
+            "mode 0 (--backend tinisat): small, loosely-constrained nodes ({} vars, "
             "clause/var={:.1f}); plain CDCL, SLS overhead not worth it"
             .format(big_vars, ratio))
 

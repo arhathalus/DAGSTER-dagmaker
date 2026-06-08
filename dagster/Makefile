@@ -37,13 +37,15 @@ OBJS 				= Cnf.o CnfManager.o SatSolver.o Dag.o Message.o TableSolutions.o BDDSo
 
 .PHONY: gnovelty
 
-dagster: $(OBJS) gnovelty/*.cc gnovelty/*.hh strengthener/*.cc strengthener/*.h minisat_solver/*.cc minisat_solver/*.h cadical_solver/*.cc cadical_solver/*.h cryptominisat_solver/*.cc cryptominisat_solver/*.h
+dagster: $(OBJS) gnovelty/*.cc gnovelty/*.hh strengthener/*.cc strengthener/*.h minisat_solver/*.cc minisat_solver/*.h cadical_solver/*.cc cadical_solver/*.h cryptominisat_solver/*.cc cryptominisat_solver/*.h clause_share/*.cc clause_share/*.h ipasir_solver/*.cc ipasir_solver/*.h
 	$(MAKE) -C strengthener
 	$(MAKE) -C gnovelty
 	$(MAKE) -C minisat_solver
 	$(MAKE) -C cadical_solver
 	$(MAKE) -C cryptominisat_solver
-	$(MPICXX) $(CPPFLAGS) $(CXXFLAGS) ./*.o gnovelty/*.o strengthener/*.o* minisat/*/*.o* minisat_solver/*.o* cadical_solver/*.o* cadical_solver/cadical/build/libcadical.a cryptominisat_solver/*.o* cryptominisat_solver/cryptominisat/build/lib/libcryptominisat5.a $(LDFLAGS) -o dagster
+	$(MAKE) -C clause_share
+	$(MAKE) -C ipasir_solver
+	$(MPICXX) $(CPPFLAGS) $(CXXFLAGS) ./*.o gnovelty/*.o strengthener/*.o* minisat/*/*.o* minisat_solver/*.o* cadical_solver/*.o* cadical_solver/cadical/build/libcadical.a cryptominisat_solver/*.o* cryptominisat_solver/cryptominisat/build/lib/libcryptominisat5.a clause_share/*.o* ipasir_solver/*.o* $(LDFLAGS) -ldl -o dagster
 
 %.o: %.cpp %.h
 	$(MPICXX) $(CPPFLAGS) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
@@ -63,6 +65,8 @@ clean:
 	$(MAKE) -C minisat_solver clean
 	$(MAKE) -C cadical_solver clean
 	$(MAKE) -C cryptominisat_solver clean
+	$(MAKE) -C clause_share clean
+	$(MAKE) -C ipasir_solver clean
 	-rm dagster *.o *.d
 	-rm ./dag_out.txt
 

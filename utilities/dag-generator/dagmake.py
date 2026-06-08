@@ -26,6 +26,7 @@ import click
 
 from dagmaker import advisor, intervals, pipeline
 from dagmaker import preprocess as preprocess_mod
+from dagmaker import symbreak as symbreak_mod
 from dagmaker.cnf import CnfIndex
 
 
@@ -77,10 +78,22 @@ from dagmaker.cnf import CnfIndex
               help="Comma-separated subset of backends to try (default: all). "
                    "Options: structure,elimination,biconnected,community,gates,"
                    "ordering,cutset,single.")
+@click.option("--symbreak", type=click.Choice(["none", "light", "full", "dag"]), default="none",
+              show_default=True,
+              help="Add symmetry-breaking clauses with BreakID before decomposing. "
+                   "'full' = break everything (smallest search space, but couples "
+                   "variables -> can widen DAG separators); 'light' = local point "
+                   "symmetries only (--row off, capped size); 'dag' = DAG-aware: break "
+                   "everything, then KEEP only the breaking clauses that fit within a "
+                   "single DAG node (no added cross-node coupling) and drop the rest. "
+                   "The DAG then references the augmented CNF.")
+@click.option("--symbroken-cnf", "symbroken_cnf", type=click.Path(dir_okay=False),
+              default=None, help="Where to write the symmetry-broken CNF "
+                   "(default: alongside the DAG).")
 @click.option("--quiet", is_flag=True, help="Only write the DAG; minimal output.")
 def main(cnf, dag, target_nodes, cores, max_sep, reporting, search, prune, family, meta,
          binary, enumerate_all, preprocess, simplified_cnf, strict_partition,
-         cutset_hubs, backends, quiet):
+         cutset_hubs, backends, symbreak, symbroken_cnf, quiet):
     """Generate DAG file <DAG> from DIMACS CNF <CNF>."""
     # the DAG's clause indices reference this CNF (the original, or the simplified one)
     cnf_for_dagster = cnf
@@ -112,6 +125,53 @@ def main(cnf, dag, target_nodes, cores, max_sep, reporting, search, prune, famil
     if not quiet:
         click.echo("  {} clauses, {} variables, {} comment marker(s)".format(
             index.n_clauses, index.max_var, len(index.comment_markers)))
+
+    # optional symmetry breaking (runs on the post-preprocess CNF). The DAG's
+    # clause indices reference the augmented CNF, so rebuild index/signed_clauses.
+    if symbreak != "none":
+        if not symbreak_mod.available():
+            click.echo("ERROR: BreakID binary not found at {}".format(symbreak_mod.BREAKID), err=True)
+            click.echo("  build it: cd utilities/symbreak/breakid && mkdir -p build "
+                       "&& cd build && cmake -DCMAKE_BUILD_TYPE=Release .. "
+                       "&& make -j breakid-bin", err=True)
+            sys.exit(2)
+        if symbroken_cnf is None:
+            base, _ = os.path.splitext(dag)
+            symbroken_cnf = base + ".symbroken.cnf"
+        if not quiet:
+            click.echo("dagmake: symmetry breaking ({}) with BreakID ...".format(symbreak))
+        try:
+            if symbreak == "dag":
+                # DAG-aware: decompose the ORIGINAL to get a node structure, break
+                # everything, then keep only breaking clauses that fit within a node.
+                dag0 = pipeline.generate(
+                    index, target_nodes=target_nodes, max_sep=max_sep, reporting=None,
+                    prune=prune, cores=cores, family=family, meta=meta,
+                    strict=strict_partition, cutset_hubs=cutset_hubs,
+                    signed_clauses=signed_clauses).best
+                node_var_sets = [
+                    set().union(*(set(index.clause_vars(i)) for i in node)) if node else set()
+                    for node in dag0.model.nodes]
+                raw_cnf = symbroken_cnf + ".full"
+                symbreak_mod.run_symbreak(cnf_for_dagster, raw_cnf, level="full", normalize=False)
+                sb = symbreak_mod.filter_local_breaking(
+                    raw_cnf, symbroken_cnf, index.n_clauses, index.max_var, node_var_sets)
+            else:
+                sb = symbreak_mod.run_symbreak(cnf_for_dagster, symbroken_cnf, level=symbreak)
+        except Exception as e:
+            click.echo("ERROR: symmetry breaking failed: {}".format(e), err=True)
+            sys.exit(2)
+        cnf_for_dagster = symbroken_cnf
+        index = CnfIndex.from_file(cnf_for_dagster)
+        signed_clauses = preprocess_mod.read_dimacs(cnf_for_dagster)[0]
+        if not quiet:
+            click.echo("  " + sb.summary())
+            if symbreak == "full" and getattr(sb, "n_global", None) and sb.n_global() > 0:
+                click.echo("  ! {} global-support generator(s) broken -- these couple "
+                           "variables and may widen DAG separators; try --symbreak dag "
+                           "to keep only the node-local breaking and preserve parallelism."
+                           .format(sb.n_global()))
+            click.echo("  wrote symmetry-broken CNF: {} (DAG references THIS file)".format(symbroken_cnf))
 
     if search:
         # decision/search mode: report a single variable, not none -- dagster's

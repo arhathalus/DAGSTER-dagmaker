@@ -41,6 +41,8 @@ Key options:
 | `--meta FILE.meta` | JSON sidecar describing structure |
 | `--preprocess` | simplify with unit propagation + pure-literal elimination first; writes the simplified CNF the DAG references |
 | `--simplified-cnf PATH` | where to write the simplified CNF (default: alongside the DAG) |
+| `--symbreak {none,light,full,dag}` | add BreakID symmetry-breaking clauses before decomposing (DAG references the augmented CNF). `light` = local symmetries only; `full` = break everything (smaller space, more coupling); **`dag` = DAG-aware** — break everything then keep only the breaking clauses internal to a single DAG node (reduction *and* parallelism). See `../symbreak/README.md`. |
+| `--symbroken-cnf PATH` | where to write the symmetry-broken CNF (default: alongside the DAG) |
 | `--strict-partition` | require each clause in exactly one node (disables the cutset backend) |
 | `--cutset-hubs N` | hub count for the overlap/cutset backend (capped at `--max-sep`) |
 

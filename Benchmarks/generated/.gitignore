@@ -1,0 +1,7 @@
+# Generated benchmark artifacts are regenerable via ../generate_benchmarks.py.
+# Track the corpus index (manifest.tsv) + README, ignore the (large, derivable) blobs.
+*.cnf
+*.map
+*.dag
+*.sol
+_label.sol

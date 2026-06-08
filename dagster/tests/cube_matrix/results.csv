@@ -1,0 +1,7 @@
+problem,mode,cubes,ranks,verdict,ground_truth,seconds
+pigeonhole6,cadical,22,8,UNSAT,UNSAT,0.883
+pigeonhole6,cadical+share,22,8,UNSAT,UNSAT,0.874
+pigeonhole7,cadical,39,8,UNSAT,UNSAT,0.931
+pigeonhole7,cadical+share,39,8,UNSAT,UNSAT,0.826
+modular,cadical,1,2,UNSAT,UNSAT,0.518
+modular,cadical+share,1,3,UNSAT,UNSAT,0.571

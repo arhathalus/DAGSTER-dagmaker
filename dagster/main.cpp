@@ -24,6 +24,9 @@ If not, see <http://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <glog/logging.h>
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +44,7 @@ using namespace std;
 #include "Worker.h"
 #include "MPICommsInterface.h"
 #include "strengthener/StrengthenerInterface.h"
+#include "clause_share/ClauseHub.h"
 #include "CnfHolder.h"
 #include <zlib.h>
 
@@ -258,6 +262,46 @@ vector<Message*> sls_execute(WrappedSolutionsInterface *master_implementation, i
 }
 
 
+// Clause-sharing topology (cube-and-conquer, CaDiCaL): one master, N conquer
+// workers, and one clause hub. Two communicators are carved from MPI_COMM_WORLD:
+//   - mastercommunicator : master (rank 0) + workers              (assignments/cubes)
+//   - clausecommunicator : workers + hub (hub last)               (learned-clause relay)
+// The hub is the final world rank; the master is excluded from the clause comm
+// and the hub from the master comm (mirrors how SLS helpers sit only in the SLS
+// comm). All ranks must call both splits.
+vector<Message*> share_execute(WrappedSolutionsInterface *master_implementation, int backend) {
+  MPI_Comm mastercommunicator, clausecommunicator;
+  vector<Message*> solutions;
+  if (world_size < 3) {
+    LOG(ERROR) << "Clause sharing needs at least 3 ranks (master + worker + hub)";
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+  bool is_master = (world_rank == 0);
+  bool is_hub    = (world_rank == world_size - 1);
+  // workers + master form the master comm (hub excluded); workers + hub form the
+  // clause comm (master excluded). key=world_rank keeps workers ahead of the hub
+  // so the hub lands at the last rank of the clause comm.
+  MPI_Comm_split(MPI_COMM_WORLD, is_hub    ? MPI_UNDEFINED : 0, world_rank, &mastercommunicator);
+  MPI_Comm_split(MPI_COMM_WORLD, is_master ? MPI_UNDEFINED : 1, world_rank, &clausecommunicator);
+
+  if (is_master) {
+    MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
+    auto master = Master(comms,master_implementation,command_line_arguments.ENUMERATE_SOLUTIONS,command_line_arguments.BREADTH_FIRST_NODE_ALLOCATIONS,true,command_line_arguments.checkpoint_frequency);
+    solutions = master.loop(command_line_arguments.checkpoint_filename);
+    delete comms;
+  } else if (is_hub) {
+    clause_hub_main(&clausecommunicator);
+  } else {
+    MPICommsInterface* comms = new MPICommsInterface(&mastercommunicator);
+    Worker* worker = new Worker(cnf_holder->dag, comms, NULL, NULL, backend, &clausecommunicator);
+    worker->loop();
+    delete comms;
+    delete worker;   // worker dtor sends the hub its teardown signal
+  }
+  return solutions;
+}
+
+
 int main(int argc, char **argv) {
   // initialise google logging and load command line arguments
   google::InitGoogleLogging(argv[0]);
@@ -294,12 +338,42 @@ int main(int argc, char **argv) {
       VLOG(2) << "WARNING: using TableMaster in dumb mode... I hope you know what you are doing.";
       master_implementation = new TableSolutions(dag,true);
     }
-    // seed dag with ininital empty messages for each node.
-    for (int i = 0; i < dag->no_nodes; i++) {
-      if (dag->node_status[i] == 1) {
-        Message *m = new Message(i, i);
+    if (command_line_arguments.cubes_filename != NULL) {
+      // CUBE-AND-CONQUER: seed the conquer node (node 0 = the whole formula) with
+      // one message per march cube. Each becomes a "solve node 0 under this cube"
+      // work item (node 0 is a root, so its self-loop edge messages[0][0] are the
+      // per-cube jobs the master distributes to workers).
+      std::ifstream cf(command_line_arguments.cubes_filename);
+      if (!cf)
+        throw BadParameterException("cube-and-conquer: cannot open cubes file");
+      std::string line;
+      int ncubes = 0;
+      while (std::getline(cf, line)) {
+        if (line.empty() || line[0] != 'a')   // march cube lines start with 'a'
+          continue;
+        std::istringstream iss(line.substr(1));
+        Message *m = new Message(0, 0);
+        int lit;
+        while (iss >> lit) {
+          if (lit == 0) break;
+          m->assignments.push_back(lit);
+        }
         master_implementation->add_message(m);
         delete m;
+        ncubes++;
+      }
+      VLOG(0) << "MASTER: cube-and-conquer -- seeded " << ncubes
+              << " cubes into the conquer node (node 0)";
+      if (ncubes == 0)
+        throw BadParameterException("cube-and-conquer: no cubes ('a ... 0' lines) in file");
+    } else {
+      // seed dag with ininital empty messages for each node.
+      for (int i = 0; i < dag->no_nodes; i++) {
+        if (dag->node_status[i] == 1) {
+          Message *m = new Message(i, i);
+          master_implementation->add_message(m);
+          delete m;
+        }
       }
     }
     //clear dag_out file
@@ -313,19 +387,32 @@ int main(int argc, char **argv) {
   // --backend/--sls/--strengthen flags are preferred; if none is supplied we fall
   // back to the legacy numeric -m selector (kept for backward compatibility).
   int backend = BACKEND_TINISAT;
-  bool sls = false, strengthen = false;
+  bool sls = false, strengthen = false, share = false;
   bool flags_used = (!command_line_arguments.backend.empty())
                     || (command_line_arguments.use_sls != -1)
-                    || (command_line_arguments.use_strengthen != -1);
+                    || (command_line_arguments.use_strengthen != -1)
+                    || (command_line_arguments.use_share != -1);
   if (flags_used) {
     const std::string& b = command_line_arguments.backend;
     if (b.empty() || b == "tinisat")            backend = BACKEND_TINISAT;
     else if (b == "minisat")                    backend = BACKEND_MINISAT;
     else if (b == "cadical")                    backend = BACKEND_CADICAL;
     else if (b == "cryptominisat" || b == "cms") backend = BACKEND_CRYPTOMINISAT;
-    else throw BadParameterException("unknown --backend (use tinisat|minisat|cadical|cryptominisat)");
+    else if (b == "ipasir")                     backend = BACKEND_IPASIR;
+    else if (b == "glucose") {                  // convenience: ipasir + vendored Glucose .so
+      backend = BACKEND_IPASIR;
+      if (command_line_arguments.ipasir_lib.empty())
+        command_line_arguments.ipasir_lib = "ipasir_solver/libipasirglucose.so";
+    }
+    else if (b == "lingeling") {                // convenience: ipasir + built Lingeling .so
+      backend = BACKEND_IPASIR;
+      if (command_line_arguments.ipasir_lib.empty())
+        command_line_arguments.ipasir_lib = "ipasir_solver/libipasirlingeling.so";
+    }
+    else throw BadParameterException("unknown --backend (use tinisat|minisat|cadical|cryptominisat|glucose|ipasir)");
     sls = (command_line_arguments.use_sls == 1);
     strengthen = (command_line_arguments.use_strengthen == 1);
+    share = (command_line_arguments.use_share == 1);
   } else {
     switch (command_line_arguments.mode) {       // legacy -m mapping
       case 0: backend = BACKEND_TINISAT; break;
@@ -338,16 +425,44 @@ int main(int argc, char **argv) {
       case 7: backend = BACKEND_CRYPTOMINISAT; break;
       case 8: backend = BACKEND_MINISAT; sls = true; break;
       case 9: backend = BACKEND_CRYPTOMINISAT; sls = true; break;
+      case 10: backend = BACKEND_CADICAL; share = true; break;  // cube-and-conquer + clause hub
       default: throw BadParameterException("Dagster called with non existant mode");
     }
   }
   // The clause-strengthening reducer is currently wired for the tinisat backend only.
   if (strengthen && backend != BACKEND_TINISAT)
     throw BadParameterException("--strengthen is currently only supported with the tinisat backend");
+  // The IPASIR backend needs a shared library to dlopen (any IPASIR solver).
+  if (backend == BACKEND_IPASIR && command_line_arguments.ipasir_lib.empty())
+    throw BadParameterException("--backend ipasir requires --ipasir-lib <libipasirSOLVER.so>");
+  // SLS helpers attach via the solver ctor; the IPASIR adapter has no SLS variant.
+  if (backend == BACKEND_IPASIR && sls)
+    throw BadParameterException("--backend ipasir does not support --sls");
+  // Clause sharing (phase 1) is CaDiCaL-only and does not yet compose with the
+  // SLS helpers or the strengthener (each owns the worker's helper communicator).
+  if (share) {
+    if (backend != BACKEND_CADICAL)
+      throw BadParameterException("--share is currently only supported with the cadical backend");
+    if (sls || strengthen)
+      throw BadParameterException("--share does not yet compose with --sls or --strengthen");
+    if (command_line_arguments.clause_share_max_size < 3)
+      throw BadParameterException("--share-max-size must be >= 3 (MpiBuffer transport minimum)");
+  }
+  // DRAT proof emission (milestone 0): CaDiCaL-only, and incompatible with the
+  // speed levers -- enumeration adds non-entailed blocking clauses, sharing/SLS
+  // break a worker's self-contained proof. See utilities/cube/PROOF_SCOPE.md.
+  if (command_line_arguments.proof_filename != NULL) {
+    if (backend != BACKEND_CADICAL)
+      throw BadParameterException("--proof is currently only supported with the cadical backend");
+    if (share || sls)
+      throw BadParameterException("--proof does not compose with --share or --sls (proof needs self-contained per-worker solves)");
+  }
 
   // enter into the respective execution path
   vector<Message*> solutions;
-  if (strengthen && sls) {
+  if (share) {
+    solutions = share_execute(master_implementation, backend);  // cadical + clause hub
+  } else if (strengthen && sls) {
     solutions = mode_2_execute(master_implementation);          // tinisat + SLS + strengthener
   } else if (strengthen) {
     solutions = mode_3_execute(master_implementation);          // tinisat + strengthener

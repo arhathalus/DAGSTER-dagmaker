@@ -44,7 +44,8 @@ Worker.o: Worker.cpp Worker.h SatSolver.h CnfManager.h Cnf.h RangeSet.h \
  cadical_solver/CadicalSolver.h cadical_solver/../SatSolverInterface.h \
  cadical_solver/../Cnf.h cryptominisat_solver/CryptominisatSolver.h \
  cryptominisat_solver/../SatSolverInterface.h \
- cryptominisat_solver/../Cnf.h
+ cryptominisat_solver/../Cnf.h ipasir_solver/IpasirSolver.h \
+ ipasir_solver/../SatSolverInterface.h ipasir_solver/../Cnf.h
 Worker.h:
 SatSolver.h:
 CnfManager.h:
@@ -117,3 +118,6 @@ cadical_solver/../Cnf.h:
 cryptominisat_solver/CryptominisatSolver.h:
 cryptominisat_solver/../SatSolverInterface.h:
 cryptominisat_solver/../Cnf.h:
+ipasir_solver/IpasirSolver.h:
+ipasir_solver/../SatSolverInterface.h:
+ipasir_solver/../Cnf.h:

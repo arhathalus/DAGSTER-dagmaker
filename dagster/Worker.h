@@ -31,7 +31,7 @@ If not, see <http://www.gnu.org/licenses/>.
 #include "SatSolverInterface.h"
 
 // CDCL backend selector for the Worker (value of the `backend` field / ctor arg)
-enum DagsterBackend { BACKEND_TINISAT = 0, BACKEND_MINISAT = 1, BACKEND_CADICAL = 2, BACKEND_CRYPTOMINISAT = 3 };
+enum DagsterBackend { BACKEND_TINISAT = 0, BACKEND_MINISAT = 1, BACKEND_CADICAL = 2, BACKEND_CRYPTOMINISAT = 3, BACKEND_IPASIR = 4 };
 
 // Worker class:
 // holds data relevent to worker loop, and the worker loop itself.
@@ -47,14 +47,16 @@ public:
 
   MPI_Comm *communicator_sls; // communicator for talking to the gnovelties
   MPI_Comm *communicator_strengthener; // communicator for talking to the strengthener
-  
+  MPI_Comm *communicator_clause; // communicator for clause sharing (CaDiCaL <-> hub); NULL = off
+
   int message_index; // the index of the message that the worker has/is working on
 
-  Worker(Dag* dag, MPICommsInterface* comms, MPI_Comm* communicator_sls, MPI_Comm* communicator_strengthener, int backend=0) {
+  Worker(Dag* dag, MPICommsInterface* comms, MPI_Comm* communicator_sls, MPI_Comm* communicator_strengthener, int backend=0, MPI_Comm* communicator_clause=NULL) {
     this->dag = dag;
     this->comms = comms;
     this->communicator_sls = communicator_sls;
     this->communicator_strengthener = communicator_strengthener;
+    this->communicator_clause = communicator_clause;
     this->backend = backend;  // true (from mode 4) implicitly converts to 1 = minisat
     this->solver_index = 0;
     this->phase = 0;

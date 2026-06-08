@@ -1,0 +1,17 @@
+family	name	params	track	nvars	nclauses	size	verdict	model	seconds	cnf	dag
+costas	costas_5	5	known	97	590	small	SAT	ok	0.027	Benchmarks/generated/costas_5.cnf	Benchmarks/generated/costas_5.dag
+costas	costas_6	6	known	146	1137	small	SAT	ok	0.008	Benchmarks/generated/costas_6.cnf	Benchmarks/generated/costas_6.dag
+costas	costas_7	7	known	265	2516	small	SAT	ok	0.041	Benchmarks/generated/costas_7.cnf	Benchmarks/generated/costas_7.dag
+costas	costas_8	8	known	358	4048	small	SAT	ok	0.052	Benchmarks/generated/costas_8.cnf	Benchmarks/generated/costas_8.dag
+costas	costas_9	9	known	561	7322	small	SAT	ok	0.074	Benchmarks/generated/costas_9.cnf	Benchmarks/generated/costas_9.dag
+determinant	determinant_3_8	3x8	known	693	3006	small	SAT	ok	0.012	Benchmarks/generated/determinant_3_8.cnf	Benchmarks/generated/determinant_3_8.dag
+determinant	determinant_4_8	4x8	known	1632	7501	small	SAT	ok	0.02	Benchmarks/generated/determinant_4_8.cnf	Benchmarks/generated/determinant_4_8.dag
+determinant	determinant_5_8	5x8	known	3175	15090	medium	SAT	ok	0.204	Benchmarks/generated/determinant_5_8.cnf	Benchmarks/generated/determinant_5_8.dag
+ramsey	ramsey_3_2	3x2x0	known	62	177	small	UNSAT		0.009	Benchmarks/generated/ramsey_3_2.cnf	Benchmarks/generated/dag_3_2.dag
+ramsey	ramsey_4_2	4x2x0	known	128	471	small	SAT	ok	0.01	Benchmarks/generated/ramsey_4_2.cnf	Benchmarks/generated/dag_4_2.dag
+ramsey	ramsey_6_3	6x3x0	known	957	5271	small	UNSAT		0.071	Benchmarks/generated/ramsey_6_3.cnf	Benchmarks/generated/dag_6_3.dag
+ramsey	ramsey_7_3	7x3x0	known	1519	8914	small	SAT	ok	0.159	Benchmarks/generated/ramsey_7_3.cnf	Benchmarks/generated/dag_7_3.dag
+ramsey	ramsey_6_8	6x8x0	known	14407	84341	large	UNSAT		0.153	Benchmarks/generated/ramsey_6_8.cnf	Benchmarks/generated/dag_6_8.dag
+ramsey	ramsey_11_4	11x4x0	hard	12969	88236	large	SAT	ok	3.822	Benchmarks/generated/ramsey_11_4.cnf	Benchmarks/generated/dag_11_4.dag
+ramsey	ramsey_12_5	12x5x0	hard	31466	219741	large	TIMEOUT		30.0	Benchmarks/generated/ramsey_12_5.cnf	Benchmarks/generated/dag_12_5.dag
+ramsey	ramsey_13_6	13x6x0	hard	68042	480411	large	TIMEOUT		30.0	Benchmarks/generated/ramsey_13_6.cnf	Benchmarks/generated/dag_13_6.dag

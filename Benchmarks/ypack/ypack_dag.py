@@ -87,6 +87,6 @@ if __name__ == "__main__":
         print("  -", p)
     print("wrote", args.out)
     print("\ncount with:")
-    print("  mpirun -n <W> {} -m 0 -e 1 -g 1 -c minisat {} {} -o out.sols"
+    print("  mpirun -n <W> {} --backend tinisat -e 1 -g 1 -c minisat {} {} -o out.sols"
           .format(args.binary, args.out, args.cnf))
     print("  (then: number of packings = number of solution lines in out.sols)")

@@ -8,17 +8,46 @@ This file is part of Dagster (GNU GPL v2+; see CadicalSolver.h header).
 #include "cadical.hpp"
 #include "../exceptions.h"
 #include "../SlsChannel.h"
+#include "../clause_share/ClauseChannel.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
 #include <glog/logging.h>
+
+// Receives CaDiCaL's learned (conflict) clauses and forwards them to the clause
+// hub via the channel. learning(size) is CaDiCaL's size gate (return true to be
+// offered a clause of that size); learn(lit) then streams the literals,
+// 0-terminated. We additionally drop any clause touching a variable beyond the
+// node's original variable set (factor/elim extension vars are not guaranteed
+// entailed by the original formula), keeping the shared pool sound to import.
+class ClauseExportLearner : public CaDiCaL::Learner {
+public:
+  ClauseExportLearner(ClauseChannel* ch, int max_size, int node_vc)
+      : channel(ch), max_size(max_size), node_vc(node_vc) {}
+  bool learning(int size) override { return size >= 3 && size <= max_size; }
+  void learn(int lit) override {
+    if (lit != 0) { pending.push_back(lit); return; }
+    bool ok = pending.size() >= 3;
+    for (size_t i = 0; ok && i < pending.size(); i++)
+      if (std::abs(pending[i]) > node_vc) ok = false;
+    if (ok) channel->export_clause(pending.data(), (int)pending.size());
+    pending.clear();
+  }
+private:
+  ClauseChannel* channel;
+  int max_size, node_vc;
+  std::vector<int> pending;
+};
 
 // CaDiCaL uses DIMACS literals directly: add(lit)/add(0) to add a clause,
 // assume(lit) for the next solve, solve() -> 10 SAT / 20 UNSAT / 0 unknown,
 // val(var) -> >0 if true, <0 if false.  No 0-based offset (unlike MiniSat).
 
-CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level) {
+CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
+                             MPI_Comm* clause_comm, int clause_max_size,
+                             const char* proof_path) {
   this->cnf = new Cnf(c);
   this->mark2 = (bool*)calloc(sizeof(bool), c->vc + 1);
   this->solver_unit_contradiction = false;
@@ -27,7 +56,19 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level) {
   this->sls_suggestion_size = 0;
   this->sls_prefix = NULL;
   this->sls_sol_buf = NULL;
+  this->clause_channel = NULL; // clause sharing off unless clause_comm given
+  this->clause_learner = NULL;
+  this->clause_node_vc = c->vc;
+  this->has_proof = false;
   this->solver = new CaDiCaL::Solver();
+  // DRAT proof tracing must be opened in CONFIGURING (before any var/clause), or
+  // CaDiCaL only writes a partial proof -- so do it first thing. The proof is a
+  // checkable certificate of an UNSAT solve of this node (drat-trim / LRAT).
+  if (proof_path != NULL) {
+    this->has_proof = this->solver->trace_proof(proof_path);
+    if (!this->has_proof)
+      VLOG(0) << "CaDiCaL could not open proof trace '" << proof_path << "'";
+  }
   // Inprocessing options must be set in CaDiCaL's CONFIGURING state -- i.e.
   // BEFORE any variable is declared or clause added -- so apply them first.
   set_inprocessing(inprocess_level);
@@ -43,6 +84,16 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level) {
     for (int j = 0; j < c->cl[i]; j++)
       this->solver->add(c->clauses[i][j]);
     this->solver->add(0);
+  }
+  // Clause sharing: connect a learned-clause exporter to the hub (the last rank
+  // of clause_comm). The solver must persist across cubes for this to pay off --
+  // the Worker keeps a clause-sharing CaDiCaL incremental (see Worker.cpp).
+  if (clause_comm != NULL) {
+    int comm_size;
+    MPI_Comm_size(*clause_comm, &comm_size);
+    this->clause_channel = new ClauseChannel(clause_comm, comm_size - 1, clause_max_size);
+    this->clause_learner = new ClauseExportLearner(clause_channel, clause_max_size, c->vc);
+    this->solver->connect_learner(this->clause_learner);
   }
 }
 
@@ -109,6 +160,18 @@ CadicalSolver::~CadicalSolver() {
   // prefix) to the helpers and frees the collective window before teardown.
   if (this->sls != NULL)
     delete this->sls;
+  // Disconnect the learner before tearing the solver down, then free the
+  // clause-sharing endpoints. (The hub teardown is signalled by the Worker, not
+  // here, so an idle worker that never built a solver still releases the hub.)
+  if (this->clause_learner != NULL) {
+    this->solver->disconnect_learner();
+    delete this->clause_learner;
+  }
+  if (this->clause_channel != NULL)
+    delete this->clause_channel;
+  // flush + close the DRAT proof so the trace file is complete before teardown
+  if (this->has_proof)
+    this->solver->close_proof_trace(false);
   free(this->sls_prefix);
   free(this->sls_sol_buf);
   free(this->mark2);
@@ -172,6 +235,20 @@ bool CadicalSolver::prune_solution(Message* reference_message) {
 int CadicalSolver::run(Message* m) {
   if (solver_unit_contradiction == true)
     return false;
+
+  // Clause sharing: pull in clauses other workers learned and add them to our
+  // database before this solve. Sound because each is entailed by the (shared)
+  // node formula; permanent because this CaDiCaL is incremental across cubes.
+  if (clause_channel != NULL) {
+    int imported = 0;
+    clause_channel->import([&](const int* lits, int n) {
+      for (int i = 0; i < n; i++) solver->add(lits[i]);
+      solver->add(0);
+      imported++;
+    });
+    if (imported > 0) VLOG(3) << "imported " << imported << " shared clauses";
+  }
+
   for (size_t j = 0; j < m->assignments.size(); j++)
     solver->assume(m->assignments[j]);          // interface assignment as assumptions
   for (size_t i = 0; i < unit_assignments.size(); i++)
@@ -204,6 +281,12 @@ int CadicalSolver::run(Message* m) {
   }
 
   int res = solver->solve();                      // 10 = SATISFIABLE
+
+  // ship clauses learned during this solve (buffered by the export learner) on
+  // to the hub for the other workers.
+  if (clause_channel != NULL)
+    clause_channel->flush();
+
   return (res == 10) ? 1 : 0;
 }
 

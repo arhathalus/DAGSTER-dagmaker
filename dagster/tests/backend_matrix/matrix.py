@@ -62,7 +62,20 @@ MODES = {
     7: ("cryptominisat", False),
     8: ("minisat+sls", True),
     9: ("cryptominisat+sls", True),
+    11: ("glucose", False),   # IPASIR backend; opt-in via --modes (needs ipasir_solver/libipasirglucose.so)
+    12: ("lingeling", False), # IPASIR backend; opt-in via --modes (needs ipasir_solver/libipasirlingeling.so)
 }
+
+
+# Dagster is driven with the orthogonal flag interface (--backend/--sls), not the
+# legacy numeric -m selector. Derive the flags from the MODES label ("tinisat+sls"
+# -> --backend tinisat --sls -k K).
+def mode_flags(mode, k):
+    label, needs_sls = MODES[mode]
+    flags = ["--backend", label.split("+")[0]]
+    if needs_sls:
+        flags += ["--sls", "-k", str(k)]
+    return flags
 
 
 # --------------------------------------------------------------------------
@@ -123,11 +136,31 @@ def tiny_problems():
     ]
 
 
+GENERATED_MANIFEST = os.path.join(REPO_ROOT, "Benchmarks", "generated", "manifest.tsv")
+
+
 def real_problems(size_filter):
     out = []
     if "medium" in size_filter and os.path.exists(SU_CNF):
         out.append(dict(name="su", cnf_path=SU_CNF, expected="SAT",
                         family="sudoku", size="medium"))
+    # Generated benchmark corpus (Benchmarks/generate_benchmarks.py): costas /
+    # determinant / ramsey instances, each labelled by an INDEPENDENT oracle
+    # (standalone CaDiCaL on the raw CNF -- not Dagster). Only oracle-confirmed
+    # SAT/UNSAT rows become regression data; this automatically excludes the
+    # 'open' research targets (verdict OPEN) and the 'hard' frontier instances
+    # the oracle could not decide (verdict TIMEOUT).
+    if os.path.exists(GENERATED_MANIFEST):
+        with open(GENERATED_MANIFEST) as f:
+            for row in csv.DictReader(f, delimiter="\t"):
+                if row["verdict"] not in ("SAT", "UNSAT") or row["size"] not in size_filter:
+                    continue
+                if row.get("model") == "INVALID":   # never trust an unvalidated SAT model
+                    continue
+                cnf = os.path.join(REPO_ROOT, row["cnf"])
+                if os.path.exists(cnf):
+                    out.append(dict(name=row["name"], cnf_path=cnf, expected=row["verdict"],
+                                    family=row["family"], size=row["size"]))
     return out
 
 
@@ -273,11 +306,10 @@ def dag_node_count(dag_path):
 
 
 def run_cell(mode, dag, cnf, out, ranks, k, enumerate_all, timeout):
-    cmd = ["mpirun", "-n", str(ranks), "--oversubscribe", "-x", "LD_LIBRARY_PATH",
-           "-x", "OMPI_MCA_btl", DAGSTER_BIN, "-m", str(mode),
-           "-e", "1" if enumerate_all else "0"]
-    if MODES[mode][1]:
-        cmd += ["-k", str(k)]
+    cmd = (["mpirun", "-n", str(ranks), "--oversubscribe", "-x", "LD_LIBRARY_PATH",
+            "-x", "OMPI_MCA_btl", DAGSTER_BIN]
+           + mode_flags(mode, k)
+           + ["-e", "1" if enumerate_all else "0"])
     cmd += [dag, cnf, "-o", out]
     t0 = time.time()
     try:
@@ -433,11 +465,13 @@ export OMPI_MCA_btl=self,tcp
 
 CELLS=({cells})
 LINE="${{CELLS[$SLURM_ARRAY_TASK_ID]}}"
-# LINE = "MODE RANKS K DAG CNF"
-read MODE RANKS K DAG CNF <<< "$LINE"
-EXTRA=""
-if [ "$K" != "-" ]; then EXTRA="-k $K"; fi
-srun -n $RANKS {bin} -m $MODE -e 0 $EXTRA "$DAG" "$CNF" -o {outdir}/sol_${{SLURM_ARRAY_TASK_ID}}.txt
+# LINE = "RANKS DAG CNF <dagster flags...>"  (flags last so they absorb the rest)
+read RANKS DAG CNF FLAGS <<< "$LINE"
+SECONDS=0
+srun -n $RANKS {bin} $FLAGS -e 0 "$DAG" "$CNF" -o {outdir}/sol_${{SLURM_ARRAY_TASK_ID}}.txt
+RC=$?
+# machine-readable line for collect.py (a missing line => the task hit the SLURM time limit)
+echo "BACKENDMATRIX task=$SLURM_ARRAY_TASK_ID rc=$RC wall=$SECONDS"
 """
 
 
@@ -446,7 +480,7 @@ def emit_hpc(profile, outdir):
     prob_dir = os.path.join(outdir, "problems")
     os.makedirs(prob_dir, exist_ok=True)
     probs = corpus_problems(profile["sizes"]) + real_problems(profile["sizes"])
-    cells = []
+    cells, meta = [], []
     for prob in probs:
         materialise_cnf(prob, prob_dir)
         dags = make_dags(prob, prob_dir, profile["node_targets"])
@@ -454,8 +488,10 @@ def emit_hpc(profile, outdir):
             nodes = dag_node_count(dag_path)
             for mode in profile["modes"]:
                 ranks = ranks_for(mode, profile, nodes)
-                k = profile["sls_k"] if MODES[mode][1] else "-"
-                cells.append("%d %d %s %s %s" % (mode, ranks, k, dag_path, prob["cnf_path"]))
+                flags = " ".join(mode_flags(mode, profile["sls_k"]))
+                meta.append((len(cells), prob["name"], prob.get("family", ""), prob.get("size", ""),
+                             dag_label, MODES[mode][0], ranks, prob.get("expected", "?")))
+                cells.append("%d %s %s %s" % (ranks, dag_path, prob["cnf_path"], flags))
     hms = "%02d:%02d:00" % (profile["timeout"] // 3600, (profile["timeout"] % 3600) // 60)
     script = SLURM_TMPL.format(
         last=max(0, len(cells) - 1), max_ranks=profile["max_ranks"], hms=hms,
@@ -464,15 +500,17 @@ def emit_hpc(profile, outdir):
     job = os.path.join(outdir, "matrix_array.slurm")
     with open(job, "w") as f:
         f.write(script)
+    # machine-readable index for collect.py (task id -> what was run)
     manifest = os.path.join(outdir, "cells.tsv")
     with open(manifest, "w") as f:
-        f.write("task_id\tmode\tranks\tk\tdag\tcnf\n")
-        for i, c in enumerate(cells):
-            f.write("%d\t%s\n" % (i, c.replace(" ", "\t")))
+        f.write("task\tproblem\tfamily\tsize\tdag\tbackend\tranks\texpected\n")
+        for t, p, fam, sz, dl, be, r, exp in meta:
+            f.write("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%s\n" % (t, p, fam, sz, dl, be, r, exp))
     print("emitted %d cells" % len(cells))
     print("  job script : %s" % job)
     print("  manifest   : %s" % manifest)
     print("  submit with : sbatch %s" % job)
+    print("  collect with: python3 collect.py %s" % os.path.abspath(outdir))
 
 
 # --------------------------------------------------------------------------

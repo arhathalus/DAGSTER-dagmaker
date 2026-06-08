@@ -1,0 +1,6 @@
+# built shared lib + objects (regenerable via build_glucose.sh)
+libipasir*.so
+*.o
+glucose/**/*.o
+glucose/**/*.or
+lingeling-build/

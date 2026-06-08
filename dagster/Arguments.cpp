@@ -47,7 +47,12 @@ Arguments::Arguments() { // all the default arguments
   backend = "";
   use_sls = -1;
   use_strengthen = -1;
+  use_share = -1;
+  clause_share_max_size = 8;
+  proof_filename = NULL;
   inprocess = "";
+  ipasir_lib = "";
+  cubes_filename = NULL;
   decision_interval = 30;
   suggestion_size = 30;
   dynamic_local_search = 0;
@@ -77,6 +82,11 @@ Arguments::Arguments() { // all the default arguments
 #define OPT_SLS        1002
 #define OPT_STRENGTHEN 1003
 #define OPT_INPROCESS  1004
+#define OPT_CUBES      1005
+#define OPT_SHARE      1006
+#define OPT_SHARE_MAX  1007
+#define OPT_PROOF      1008
+#define OPT_IPASIR_LIB 1009
 
 static char doc[] = "Uses MPI to spawn SAT solvers working on different parts of a problem\nneed to specify a CNF file and associated DAG structure\nsee documenation for specifications.";
 static char args_doc[] = "DAG_FILE CNF_FILE";
@@ -94,10 +104,15 @@ static struct argp_option options[] = {
   { "number of gnovelties per solver", 'k', "novelty_number", 0, "number of gnovelties per sat solver (only in gnovelty mode)"},
   { "gnovelty solution checking time", 'l', "gnovelty_solution_checking_time", 0, "the number decsions that the CDCL will make before checking for a solution from gnovelties"},
   { "MODE", 'm', "MODE", 0, "Legacy numeric operation selector (0-9). Prefer --backend/--sls/--strengthen."},
-  { "backend", OPT_BACKEND, "BACKEND", 0, "CDCL backend: tinisat (default) | minisat | cadical | cryptominisat"},
+  { "backend", OPT_BACKEND, "BACKEND", 0, "CDCL backend: tinisat (default) | minisat | cadical | cryptominisat | glucose | lingeling | ipasir"},
+  { "ipasir-lib", OPT_IPASIR_LIB, "SO", 0, "path to a libipasir<solver>.so for --backend ipasir (any IPASIR solver, dlopen'd at run time)"},
   { "sls", OPT_SLS, 0, 0, "guide the CDCL search with gNovelty+ SLS helper processes"},
   { "strengthen", OPT_STRENGTHEN, 0, 0, "run a clause-strengthening reducer process (tinisat backend only)"},
   { "inprocess", OPT_INPROCESS, "LEVEL", 0, "backend inprocessing aggressiveness: off | light | default | heavy (minisat/cadical/cryptominisat)"},
+  { "cubes", OPT_CUBES, "FILE", 0, "cube-and-conquer: seed the conquer node with march cubes from FILE (lines 'a <lits> 0')"},
+  { "share", OPT_SHARE, 0, 0, "clause sharing: dedicate one rank as a hub relaying learned clauses between cube-and-conquer workers (cadical backend only)"},
+  { "share-max-size", OPT_SHARE_MAX, "N", 0, "max length of a learned clause shared via --share (default 8; must be >= 3)"},
+  { "proof", OPT_PROOF, "FILE", 0, "emit a DRAT UNSAT proof per worker to FILE.<rank> (cadical backend; single-node UNSAT solve)"},
 
   { "OUTPUT_FILE", 'o', "OUTPUT_FILE", 0, "the filename to be outputted to"},
   { "tinisat restarting", 'p', "tinisat_restarting", 0, "a flag that is set if tinisat is to do restarts in its decision process."},
@@ -184,6 +199,21 @@ static error_t parse_option( int key, char *arg, struct argp_state *state )
     break;
   case OPT_INPROCESS:
     arguments->inprocess = arg;
+    break;
+  case OPT_CUBES:
+    arguments->cubes_filename = arg;
+    break;
+  case OPT_SHARE:
+    arguments->use_share = 1;
+    break;
+  case OPT_SHARE_MAX:
+    PARSE_ARGUMENT(arguments->clause_share_max_size,"--share-max-size::clause_share_max_size");
+    break;
+  case OPT_PROOF:
+    arguments->proof_filename = arg;
+    break;
+  case OPT_IPASIR_LIB:
+    arguments->ipasir_lib = arg;
     break;
   case 'o':
     arguments->output_filename = arg;

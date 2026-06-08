@@ -42,6 +42,7 @@ If not, see <http://www.gnu.org/licenses/>.
 #include "minisat_solver/minisat_solver.h"
 #include "cadical_solver/CadicalSolver.h"
 #include "cryptominisat_solver/CryptominisatSolver.h"
+#include "ipasir_solver/IpasirSolver.h"
 
 extern CnfHolder* cnf_holder;
 extern Arguments command_line_arguments;
@@ -147,6 +148,12 @@ Worker::~Worker() {
   }
   if (communicator_strengthener != NULL)    // kill the reducer
     MPI_Send(&kill_signal, 1, MPI_INT, 1, CNF_FILENAME_LENGTH_TAG, *communicator_strengthener);
+  if (communicator_clause != NULL) {         // signal teardown to the clause hub
+    int hub_rank;                            // hub is the last rank of the clause comm
+    MPI_Comm_size(*communicator_clause, &hub_rank);
+    hub_rank -= 1;
+    MPI_Send(&kill_signal, 1, MPI_INT, hub_rank, CLAUSE_SHARE_KILL_TAG, *communicator_clause);
+  }
 }
 
 
@@ -199,16 +206,22 @@ void Worker::initialise_solver_from_message(Message* m) {
   bool incremental_backend = (communicator_sls == NULL) &&
                              (backend == BACKEND_MINISAT ||
                               backend == BACKEND_CRYPTOMINISAT ||
-                              backend == BACKEND_CADICAL);
+                              backend == BACKEND_CADICAL ||
+                              backend == BACKEND_IPASIR);
   if (incremental_backend) {  // incremental backends: per-node slots
-    if (command_line_arguments.minisat_incrementality_mode==1) {
+    // Clause sharing requires the CaDiCaL instance to PERSIST across cubes (all
+    // targeting the same conquer node) so that shared/learned clauses accumulate
+    // -- i.e. force the keep-if-same-node lifecycle regardless of -q.
+    bool keep_per_node = (command_line_arguments.minisat_incrementality_mode==1)
+                         || (communicator_clause != NULL);
+    if (keep_per_node) {
       if (solver_index != m->to) {
         if (solvers[solver_index] != NULL) {
           delete solvers[solver_index];
           solvers[solver_index] = NULL;
         }
       }
-    } else if (command_line_arguments.minisat_incrementality_mode==0) {
+    } else {  // minisat_incrementality_mode==0: rebuild every message
       if (solvers[solver_index] != NULL) {// kill existing instance
         delete solvers[solver_index];
         solvers[solver_index] = NULL;
@@ -268,8 +281,16 @@ void Worker::initialise_solver_from_message(Message* m) {
         solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to),
             communicator_sls, command_line_arguments.suggestion_size,
             cnf_holder->max_vc, phase++, inprocess_level);
-      } else {                          // plain incremental CaDiCaL
-        solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
+      } else {                          // plain incremental CaDiCaL (+ optional clause sharing / proof)
+        std::string proof_path;
+        const char* proof_arg = NULL;
+        if (command_line_arguments.proof_filename != NULL) {
+          // one proof per worker: <file>.<world_rank> (collected/checked offline)
+          proof_path = std::string(command_line_arguments.proof_filename) + "." + std::to_string(comms->world_rank);
+          proof_arg = proof_path.c_str();
+        }
+        solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to), inprocess_level,
+            communicator_clause, command_line_arguments.clause_share_max_size, proof_arg);
       }
     }
     if (m->additional_clauses != NULL) {
@@ -298,6 +319,13 @@ void Worker::initialise_solver_from_message(Message* m) {
         solvers[solver_index] = new CryptominisatSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
       }
     }
+    if (m->additional_clauses != NULL) {
+      solvers[solver_index]->append_cnf(m->additional_clauses);
+    }
+  } else if (backend == BACKEND_IPASIR) {
+    if (solvers[solver_index] == NULL)              // any IPASIR solver, loaded from --ipasir-lib
+      solvers[solver_index] = new IpasirSolver(cnf_holder->get_Cnf(m->to),
+          command_line_arguments.ipasir_lib.c_str());
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
     }

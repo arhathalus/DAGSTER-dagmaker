@@ -27,9 +27,11 @@ License for more details.
 
 // forward-declare so callers (Worker.cpp) don't need CaDiCaL's headers;
 // cadical.hpp is included only in CadicalSolver.cc.
-namespace CaDiCaL { class Solver; }
+namespace CaDiCaL { class Solver; class Learner; }
 // forward-declare the SLS guidance channel (mpi-only, defined in ../SlsChannel.h)
 class SlsChannel;
+// forward-declare the clause-sharing endpoint (defined in ../clause_share/)
+class ClauseChannel;
 
 // A SatSolverInterface backend wrapping CaDiCaL (incremental: assume + solve +
 // blocking-clause enumeration). Mirrors MinisatSolver semantics exactly so that
@@ -49,10 +51,27 @@ public:
   int* sls_prefix;     // scratch buffer (vc+1 ints) for the assignment prefix
   int* sls_sol_buf;    // scratch buffer for an SLS-supplied solution
 
+  // --- optional clause sharing (cube-and-conquer; NULL when disabled) ---
+  // The learned-clause exporter (a CaDiCaL::Learner) pushes conflict clauses to
+  // the channel; run() imports clauses other workers shared. Sound because CDCL
+  // learned clauses are formula-entailed independent of the cube assumptions.
+  ClauseChannel* clause_channel;     // owned; transport to the clause hub
+  CaDiCaL::Learner* clause_learner;  // owned; connected to `solver`
+  int clause_node_vc;                // export only clauses over vars <= this
+
+  bool has_proof;                    // a DRAT proof trace was opened (close on dtor)
+
   // plain incremental CaDiCaL (no SLS). inprocess_level tunes CaDiCaL's own
   // inprocessing and MUST be applied before clauses are added (CaDiCaL only
   // accepts set() in its CONFIGURING state), so it is passed to the ctor.
-  CadicalSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET);
+  // clause_comm (when non-NULL) enables clause sharing to the hub at its last
+  // rank; clause_max_size bounds the length of exported learned clauses.
+  // proof_path (when non-NULL) writes a DRAT proof of this solve -- it too must
+  // be opened in CONFIGURING, so it is a ctor param. Intended for an UNSAT solve
+  // of a single node (no enumeration / sharing); see utilities/cube/PROOF_SCOPE.md.
+  CadicalSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET,
+                MPI_Comm* clause_comm = NULL, int clause_max_size = 8,
+                const char* proof_path = NULL);
   // CaDiCaL guided by gnovelty helpers over communicator_sls. max_vc bounds the
   // SLS solution buffer; phase tags this message (matches the helpers).
   CadicalSolver(Cnf* cnf, MPI_Comm* communicator_sls, int suggestion_size,

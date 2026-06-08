@@ -37,8 +37,8 @@ main.o: main.cpp /usr/lib/x86_64-linux-gnu/openmpi/include/mpi.h \
  DisorderedArray.h StatisticsModule.h CnfHolder.h Worker.h SatSolver.h \
  CnfManager.h SatSolverInterface.h strengthener/MpiBuffer.h \
  strengthener/Work.h strengthener/StrengthenerInterface.h \
- strengthener/../Cnf.h strengthener/../CnfHolder.h TableSolutions.h \
- BDDSolutions.h
+ strengthener/../Cnf.h strengthener/../CnfHolder.h \
+ clause_share/ClauseHub.h TableSolutions.h BDDSolutions.h
 /usr/lib/x86_64-linux-gnu/openmpi/include/mpi.h:
 /usr/lib/x86_64-linux-gnu/openmpi/include/mpi_portable_platform.h:
 /usr/lib/x86_64-linux-gnu/openmpi/include/openmpi/ompi/mpi/cxx/mpicxx.h:
@@ -97,5 +97,6 @@ strengthener/Work.h:
 strengthener/StrengthenerInterface.h:
 strengthener/../Cnf.h:
 strengthener/../CnfHolder.h:
+clause_share/ClauseHub.h:
 TableSolutions.h:
 BDDSolutions.h:
