@@ -125,7 +125,7 @@ def problems(sizes):
         # the rank count (see _cube_target). Spans a difficulty band so the HPC run
         # reveals where sharing helps.
         specs += [("pigeonhole%d" % (h + 1), (lambda h=h: G.pigeonhole(holes=h)[:2]),
-                   "none", None, "hard") for h in (10, 11, 12, 13, 14)]
+                   "none", None, "hard") for h in (10, 11, 12, 13, 14, 15, 16)]
     res = []
     for name, fn, sb, depth, size in specs:
         if size not in sizes:
@@ -298,8 +298,10 @@ def run_local(profile, modes, workdir, results_csv):
             flag = ""
             if verdict in ("SAT", "UNSAT") and gt in ("SAT", "UNSAT") and verdict != gt:
                 flag = "  <-- WRONG (conquer != ground truth)"; failures += 1
-            elif verdict.startswith(("ERR", "TIMEOUT")):
-                flag = "  <-- %s" % verdict
+            elif verdict.startswith("ERR"):   # crash / backend unavailable -- a real failure, not a silent skip
+                flag = "  <-- %s (crashed / backend unavailable)" % verdict; failures += 1
+            elif verdict == "TIMEOUT":
+                flag = "  <-- TIMEOUT"
             sp = "  (%.2fx)" % (base_t / secs) if (base_t and secs > 0 and verdict in ("SAT", "UNSAT")) else ""
             print("   %-12s ranks=%d  %-7s %7.2fs%s%s" % (MODE_LABEL[mode], ranks, verdict, secs, sp, flag))
             rows.append(dict(problem=prob["name"], mode=MODE_LABEL[mode], cubes=ncubes,

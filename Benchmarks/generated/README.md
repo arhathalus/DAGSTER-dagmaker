@@ -18,7 +18,17 @@ Every instance is tagged with a **track** describing its purpose:
 |---|---|---|
 | `known` | verdict settled **and** oracle-confirmed (SAT/UNSAT) | regression test data (known answer) |
 | `hard` | solver-uncertain frontier; the oracle may TIMEOUT | scaling benchmark (run with big cores/timeouts) |
+| `big` | genuinely HARD, verdict KNOWN by construction (too hard to label by solving) | **HPC speedup demos** — `size=large`, so HPC-only |
 | `open` | a genuinely **open** mathematical problem | a **Dagster research target** — not labelled |
+
+The `big` track exists because most instances solve instantly (wall time is just
+mpirun startup), so they can't show any speedup. Big instances are minutes+
+single-core: costas N=15–18 (SAT — Costas arrays exist), pigeonhole holes 13–16
+(UNSAT — exponential for CDCL, no symmetry breaking), determinant 6–7 (SAT). They're
+small *files* (fast to generate) but their `size` is forced to `large` so they run
+only in the HPC profile — local/quick profiles skip them (else everything times
+out). `backend_matrix` serves them automatically at its `large` tier; `cube_matrix`
+has its own pigeonhole ladder (holes 10–16) for the clause-sharing speedup.
 
 `dagster/tests/backend_matrix/matrix.py` reads `manifest.tsv` in `real_problems()`
 and uses only **oracle-confirmed SAT/UNSAT** rows as regression data — so `open`

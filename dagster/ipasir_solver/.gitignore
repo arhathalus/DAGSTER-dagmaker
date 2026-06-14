@@ -3,4 +3,4 @@ libipasir*.so
 *.o
 glucose/**/*.o
 glucose/**/*.or
-lingeling-build/
+lingeling/

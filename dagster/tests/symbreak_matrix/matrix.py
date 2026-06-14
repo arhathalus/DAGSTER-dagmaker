@@ -244,6 +244,10 @@ def run_local(profile, modes, workdir, results_csv):
                     flag = " <-SYMBREAK UNSOUND"; failures += 1
                 if verdict in ("SAT", "UNSAT") and gt in ("SAT", "UNSAT") and verdict != gt:
                     flag += " <-DAG UNSOUND"; failures += 1
+                # a crash / unavailable backend (ERR, distinct from TIMEOUT) is a real
+                # failure, not a silent skip (else "tests pass" while nothing solved).
+                if verdict.startswith("ERR") or orig_v.startswith("ERR"):
+                    flag += " <-ERR (crashed / backend unavailable)"; failures += 1
                 sp = ""
                 if base_time and verdict in ("SAT", "UNSAT") and secs > 0:
                     sp = "  (%.2fx)" % (base_time / secs)

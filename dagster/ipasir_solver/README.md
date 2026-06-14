@@ -34,15 +34,18 @@ solution *counts* under enumeration (`-e 1`).
 ## Lingeling (a second drop-in — proves the genericity)
 
 Lingeling (Biere) is a completely different engine from the MiniSat family, added
-with **zero Dagster code changes** — just another `.so`:
+with **zero Dagster code changes** — just another `.so`. Provide the source
+yourself from GitHub (the build script does **not** fetch), then build:
 
 ```sh
-bash ipasir_solver/build_lingeling.sh    # fetches Lingeling, builds libipasirlingeling.so
+git clone https://github.com/arminbiere/lingeling ipasir_solver/lingeling
+bash ipasir_solver/build_lingeling.sh                 # -> libipasirlingeling.so
+# (or point at a checkout elsewhere: build_lingeling.sh /path/to/lingeling)
 mpirun -n N dagster --backend lingeling  DAG CNF
 ```
-`lingeling_glue.cpp` (vendored) freezes variables for incremental use. Lingeling
-source is fetched on demand (not committed); validated to match the other backends
-on verdicts and enumeration counts.
+`lingeling_glue.cpp` (vendored) freezes variables for incremental use. The
+`lingeling/` source dir is git-ignored (you supply it); validated to match the
+other backends on verdicts and enumeration counts.
 
 ## Adding another IPASIR solver (Maple, CaDiCaL, …)
 

@@ -12,10 +12,18 @@ against every clause.
 Each instance is tagged with a TRACK:
   known  settled & oracle-confirmed (SAT/UNSAT)  -> regression test data
   hard   solver-uncertain frontier               -> scaling benchmark (may TIMEOUT)
+  big    genuinely HARD, known verdict           -> HPC SPEEDUP demos (size=large, HPC-only)
   open   genuinely open mathematics              -> a Dagster research TARGET (unlabelled)
 
+The `big` track exists because most instances solve instantly (startup-dominated),
+so they can't demonstrate any speedup. Big instances are minutes+ single-core, too
+hard to label by solving, so their verdict is KNOWN by construction (costas arrays
+exist -> SAT; pigeonhole -> UNSAT; determinant -> SAT). They are small files; the
+size is forced to "large" so they run only in the HPC profile, not local/quick.
+
 Families:
-  costas N         Costas arrays (SAT for the n shipped); generator emits a 2-node DAG.
+  costas N         Costas arrays (SAT); generator emits a 2-node DAG.
+  pigeonhole H     H holes / H+1 pigeons -> UNSAT; exponential for CDCL (symbreak off).
   determinant S B  max-determinant #SAT enumeration over an SxS matrix, B bits/entry (SAT).
   ramsey N M [Z]   Ramsey/Monk relation-algebra representability: colour K_N's edges with
                    M colours, no monochromatic triangle, every non-mono triangle everywhere.
@@ -83,6 +91,24 @@ SPECS = [
     # --- OPEN research targets: representability unknown (cyclic ruled out) --
     dict(family="ramsey", params=(15, 8, 0), track="open"),   # n=8 open case, past the refuted range
     dict(family="ramsey", params=(14, 13, 0), track="open"),  # n=13 open case
+
+    # --- BIG: genuinely HARD instances for HPC speedup demos -----------------
+    # Too hard to solve in the labelling cap (minutes+ single-core), so the verdict
+    # is the KNOWN answer by construction; `size="large"` keeps them OUT of the
+    # local/quick profiles (they'd just time out) and IN the HPC profile. costas
+    # arrays exist for every order here (SAT); pigeonhole is UNSAT; determinant SAT.
+    # The hardness knee (single-core cadical): costas N>=16 and php holes>=13 are
+    # >60-90s; harder ones are included to generate more useful scaling data.
+    dict(family="costas", params=(15,), track="big", expected="SAT", size="large"),
+    dict(family="costas", params=(16,), track="big", expected="SAT", size="large"),
+    dict(family="costas", params=(17,), track="big", expected="SAT", size="large"),
+    dict(family="costas", params=(18,), track="big", expected="SAT", size="large"),
+    dict(family="pigeonhole", params=(13,), track="big", expected="UNSAT", size="large"),
+    dict(family="pigeonhole", params=(14,), track="big", expected="UNSAT", size="large"),
+    dict(family="pigeonhole", params=(15,), track="big", expected="UNSAT", size="large"),
+    dict(family="pigeonhole", params=(16,), track="big", expected="UNSAT", size="large"),
+    dict(family="determinant", params=(6, 8), track="big", expected="SAT", size="large"),
+    dict(family="determinant", params=(7, 8), track="big", expected="SAT", size="large"),
 ]
 
 
@@ -112,6 +138,29 @@ def build_generators():
 
 def generate(family, params):
     """Produce (name, cnf_path, dag_path) in GEN_DIR for one instance."""
+    if family == "pigeonhole":
+        # h holes, h+1 pigeons -> UNSAT; exponential for CDCL (keep symmetry breaking
+        # OFF -- it would collapse it). Emit the CNF + a single-node DAG over it.
+        (h,) = params
+        name = "pigeonhole_%d" % h
+        cnf = os.path.join(GEN_DIR, name + ".cnf")
+        dag = os.path.join(GEN_DIR, name + ".dag")
+
+        def var(p, hole):
+            return p * h + hole + 1
+        clauses = [[var(p, hole) for hole in range(h)] for p in range(h + 1)]   # each pigeon in a hole
+        for hole in range(h):
+            for a in range(h + 1):
+                for b in range(a + 1, h + 1):
+                    clauses.append([-var(a, hole), -var(b, hole)])             # no two pigeons share a hole
+        nv = (h + 1) * h
+        with open(cnf, "w") as f:
+            f.write("p cnf %d %d\n" % (nv, len(clauses)))
+            for c in clauses:
+                f.write(" ".join(map(str, c)) + " 0\n")
+        with open(dag, "w") as f:
+            f.write("DAG-FILE\nNODES:1\nGRAPH:\nCLAUSES:\n0:0-%d\nREPORTING:\n1-%d\n" % (len(clauses) - 1, nv))
+        return name, cnf, dag
     if family == "costas":
         (n,) = params
         name = "costas_%d" % n
@@ -185,7 +234,9 @@ def main():
     # Open targets are huge (n=13/N=14 is ~110 MB) and are research inputs for the
     # Dagster workflow, not regression data -- so they are generate-on-demand:
     #   python3 generate_benchmarks.py --tracks open
-    ap.add_argument("--tracks", default="known,hard", help="comma list of tracks to generate (known,hard,open)")
+    ap.add_argument("--tracks", default="known,hard,big",
+                    help="comma list of tracks to generate: known, hard, big, open "
+                         "(big = hard HPC instances, small files, known verdict; open = huge research targets, on-demand)")
     ap.add_argument("--no-build", action="store_true", help="skip building the C generators")
     args = ap.parse_args()
 
@@ -211,12 +262,18 @@ def main():
         if not (os.path.exists(cnf) and os.path.exists(dag)):
             print("  (skip %s %s: generator produced no cnf/dag)" % (family, params)); continue
         nv, nc = cnf_dims(cnf)
-        verdict, secs, model = label(cnf, track, args.timeout)
+        if track == "big":
+            # too hard to solve in the labelling cap -> use the KNOWN verdict by
+            # construction (don't burn the oracle on a guaranteed timeout).
+            verdict, secs, model = spec["expected"], 0.0, "known"
+        else:
+            verdict, secs, model = label(cnf, track, args.timeout)
+        size = spec.get("size") or size_of(nv)   # big track forces 'large' (HPC-only)
         flag = "  <-- MODEL INVALID (encoding bug?)" if model == "INVALID" else ""
         print("%-20s %-11s %-6s %8d %9d  %-8s %-8s %8.2f%s" %
               (name, family, track, nv, nc, verdict, model, secs, flag))
         rows.append(dict(family=family, name=name, params="x".join(map(str, params)),
-                         track=track, nvars=nv, nclauses=nc, size=size_of(nv),
+                         track=track, nvars=nv, nclauses=nc, size=size,
                          verdict=verdict, model=model, seconds=round(secs, 3),
                          cnf=os.path.relpath(cnf, REPO_ROOT), dag=os.path.relpath(dag, REPO_ROOT)))
 

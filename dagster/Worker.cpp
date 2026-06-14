@@ -40,8 +40,12 @@ If not, see <http://www.gnu.org/licenses/>.
 #include "CnfHolder.h"
 #include "exceptions.h"
 #include "minisat_solver/minisat_solver.h"
+#ifdef HAVE_CADICAL
 #include "cadical_solver/CadicalSolver.h"
+#endif
+#ifdef HAVE_CRYPTOMINISAT
 #include "cryptominisat_solver/CryptominisatSolver.h"
+#endif
 #include "ipasir_solver/IpasirSolver.h"
 
 extern CnfHolder* cnf_holder;
@@ -272,7 +276,13 @@ void Worker::initialise_solver_from_message(Message* m) {
     free(dehydrated_message);
   }
   
-  if (backend == BACKEND_CADICAL) {
+  // Optional backends (CaDiCaL / CryptoMiniSat) are #ifdef-guarded so dagster
+  // builds without their vendored libs. The leading `if (false)` makes every
+  // backend below an else-if, so any can be compiled out cleanly. Selecting an
+  // absent backend is rejected in main.cpp before we reach here.
+  if (false) { /* placeholder */ }
+#ifdef HAVE_CADICAL
+  else if (backend == BACKEND_CADICAL) {
     if (solvers[solver_index] == NULL) {
       if (communicator_sls != NULL) {  // CaDiCaL guided by gnovelty helpers
         // phase++ matches the phase just stamped into the dehydrated message
@@ -296,7 +306,9 @@ void Worker::initialise_solver_from_message(Message* m) {
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
     }
-  } else if (backend == BACKEND_MINISAT) {
+  }
+#endif
+  else if (backend == BACKEND_MINISAT) {
     if (solvers[solver_index] == NULL) {
       if (communicator_sls != NULL) {  // MiniSat guided by gnovelty helpers
         solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to),
@@ -309,7 +321,9 @@ void Worker::initialise_solver_from_message(Message* m) {
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
     }
-  } else if (backend == BACKEND_CRYPTOMINISAT) {
+  }
+#ifdef HAVE_CRYPTOMINISAT
+  else if (backend == BACKEND_CRYPTOMINISAT) {
     if (solvers[solver_index] == NULL) {
       if (communicator_sls != NULL) {  // CryptoMiniSat with gnovelty helpers
         solvers[solver_index] = new CryptominisatSolver(cnf_holder->get_Cnf(m->to),
@@ -322,7 +336,9 @@ void Worker::initialise_solver_from_message(Message* m) {
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
     }
-  } else if (backend == BACKEND_IPASIR) {
+  }
+#endif
+  else if (backend == BACKEND_IPASIR) {
     if (solvers[solver_index] == NULL)              // any IPASIR solver, loaded from --ipasir-lib
       solvers[solver_index] = new IpasirSolver(cnf_holder->get_Cnf(m->to),
           command_line_arguments.ipasir_lib.c_str());

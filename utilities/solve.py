@@ -86,11 +86,20 @@ def main():
     ap.add_argument("--symbreak", choices=["auto", "none", "light", "full", "dag"], default="auto",
                     help="auto = break if BreakID finds symmetry (dag-level for decompose, full for cube)")
     ap.add_argument("--route", choices=["auto", "decompose", "cube"], default="auto")
+    ap.add_argument("--count", "--enumerate", action="store_true", dest="count",
+                    help="enumerate ALL solutions (#SAT) instead of stopping at the first; "
+                         "dispatches to dagster with -e 1 and forces the decompose route "
+                         "(the cube route can solve easy instances during cubing and never "
+                         "reach dagster, so it can't count)")
     ap.add_argument("--decompose-sep-threshold", type=int, default=24,
                     help="route to DAG decomposition if dagmaker's best separator <= this (default 24)")
     ap.add_argument("--probe-timeout", type=int, default=60,
                     help="seconds for the dagmaker routing probe; on timeout, route to CUBE (default 60)")
     ap.add_argument("--march-depth", type=int, default=None, help="cube cutoff (cube route); overrides auto-tune")
+    ap.add_argument("--march-timeout", type=int, default=300,
+                    help="cube route: wall-clock budget for march cubing (s). On a big CNF march's per-node "
+                         "lookahead is costly (~seconds/node), so cubing time ~= cubes x per-node; raise this "
+                         "for more cubes, or set a fixed shallow --march-depth (one fast pass)")
     ap.add_argument("--target-cubes", type=int, default=None,
                     help="cube route: auto-tune depth to ~this many cubes (default 8 x cores)")
     ap.add_argument("--backend", choices=BACKENDS, default="cadical")
@@ -155,6 +164,22 @@ def main():
     # ---- 4. route on structure -----------------------------------------
     route = args.route
     sep, pw, nodes = None, None, None
+    # --count (#SAT enumeration) must reach dagster and combine solutions across the
+    # DAG; the cube route can solve easy instances during cubing and exit without
+    # ever dispatching, so it can't count -> force decompose.
+    if args.count:
+        if args.route == "cube":
+            print("[4] route           -> NOTE: --count cannot use the cube route; using DECOMPOSE")
+        route = "decompose"
+        # Symmetry breaking keeps one solution per orbit -> it CHANGES the count.
+        # Counting must be over the original formula, so disable it (unless the user
+        # explicitly asked for a level, in which case warn they're counting orbits).
+        if args.symbreak == "auto":
+            args.symbreak = "none"
+            print("                       --count: symmetry breaking OFF (it changes the solution count)")
+        elif args.symbreak != "none":
+            print("                       --count WARNING: --symbreak %s counts orbit representatives, "
+                  "not all solutions" % args.symbreak)
     if route == "auto":
         # ask dagmaker for the best achievable separator on the (preprocessed) CNF.
         # Budget it: on a large/hard instance the probe is slow, and a slow/failed
@@ -187,6 +212,7 @@ def main():
 
     # ---- 5. build the chosen pipeline + emit ---------------------------
     ranks = max(2, args.cores)
+    enum = "1" if args.count else "0"      # -e 1 enumerates/counts all solutions
     if route == "decompose":
         sbreak = "dag" if (args.symbreak == "auto" and n_gens > 0) else \
                  (args.symbreak if args.symbreak in ("none", "light", "full", "dag") else "none")
@@ -200,13 +226,14 @@ def main():
             sys.exit("dagmake failed:\n" + p.stdout[-400:] + p.stderr[-400:])
         # the DAG references the (possibly symmetry-broken) CNF dagmake wrote
         final_cnf = base + ".symbroken.cnf" if sbreak != "none" and os.path.exists(base + ".symbroken.cnf") else cnf
-        dcmd = "mpirun -n %d %s --backend %s -e 0 %s %s" % (ranks, DAGSTER_BIN, args.backend, dag, final_cnf)
+        dcmd = "mpirun -n %d %s --backend %s -e %s %s %s" % (ranks, DAGSTER_BIN, args.backend, enum, dag, final_cnf)
     else:  # cube
         sbreak = "full" if (args.symbreak == "auto" and n_gens > 0) else \
                  (args.symbreak if args.symbreak in ("none", "light", "full") else "none")
         cubes = base + ".icnf"
         formula = base + ".cube.cnf"
-        cmd = [VENV_PY, CUBE_PY, cnf, "-o", cubes, "--final-cnf", formula, "--symbreak", sbreak]
+        cmd = [VENV_PY, CUBE_PY, cnf, "-o", cubes, "--final-cnf", formula, "--symbreak", sbreak,
+               "--march-timeout", str(args.march_timeout)]
         target = args.target_cubes if args.target_cubes else 8 * args.cores  # ~8 cubes/core for load balance
         if args.march_depth is not None:
             cmd += ["--march-depth", str(args.march_depth)]
@@ -237,9 +264,9 @@ def main():
             share_ranks = max(3, ranks)
             print("                       clause sharing ON -> --share, hub on 1 rank, "
                   "%d conquer workers" % (share_ranks - 2))
-            dcmd = "mpirun -n %d %s --backend cadical --share -e 0 --cubes %s %s %s" % (share_ranks, DAGSTER_BIN, cubes, conquer_dag, formula)
+            dcmd = "mpirun -n %d %s --backend cadical --share -e %s --cubes %s %s %s" % (share_ranks, DAGSTER_BIN, enum, cubes, conquer_dag, formula)
         else:
-            dcmd = "mpirun -n %d %s --backend %s -e 0 --cubes %s %s %s" % (ranks, DAGSTER_BIN, args.backend, cubes, conquer_dag, formula)
+            dcmd = "mpirun -n %d %s --backend %s -e %s --cubes %s %s %s" % (ranks, DAGSTER_BIN, args.backend, enum, cubes, conquer_dag, formula)
 
     print("\nPLAN (%s, backend=%s, %d ranks):\n  %s" % (route, args.backend, ranks, dcmd))
     print("\noverride any stage: --no-preprocess  --symbreak {none,light,full,dag}  "
@@ -259,9 +286,23 @@ def main():
         run_argv = dcmd.split()
         run_argv = run_argv[:1] + ["--oversubscribe"] + run_argv[1:]
         rc = subprocess.call(run_argv + ["-o", out], env=env)
-        verdict = "SAT" if (os.path.exists(out) and os.path.getsize(out) > 0) else \
-                  ("UNSAT" if rc == 0 else "ERR(%d)" % rc)
-        print("[run] verdict: %s   (solution: %s)" % (verdict, out if verdict == "SAT" else "-"))
+        # count DISTINCT solutions: dagster can emit a solution once per worker that
+        # enumerated a node, so the #SAT answer is the number of unique projected lines.
+        nsol = ntotal = 0
+        if os.path.exists(out):
+            with open(out, errors="replace") as f:
+                lines = [ln.strip() for ln in f if ln.strip()]
+            ntotal = len(lines)
+            nsol = len(set(lines))
+        if rc != 0:
+            print("[run] verdict: ERR(%d)" % rc)
+        elif args.count:
+            dup = "" if ntotal == nsol else "  (%d raw lines incl. per-worker duplicates)" % ntotal
+            print("[run] verdict: %s   count: %d distinct solution(s)%s   (%s)"
+                  % ("SAT" if nsol else "UNSAT", nsol, dup, out))
+        else:
+            print("[run] verdict: %s   (solution: %s)"
+                  % ("SAT" if nsol else "UNSAT", out if nsol else "-"))
 
 
 def indent(s):

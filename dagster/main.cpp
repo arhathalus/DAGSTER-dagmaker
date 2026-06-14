@@ -429,6 +429,17 @@ int main(int argc, char **argv) {
       default: throw BadParameterException("Dagster called with non existant mode");
     }
   }
+  // Optional backends are compiled in only when their vendored library was present
+  // at build time (see Makefile HAVE_*). Reject selecting one that isn't built.
+#ifndef HAVE_CADICAL
+  if (backend == BACKEND_CADICAL)
+    throw BadParameterException("the cadical backend is not compiled in (vendored CaDiCaL libcadical.a was absent at build time); build it and `make clean && make`, or pick another --backend");
+#endif
+#ifndef HAVE_CRYPTOMINISAT
+  if (backend == BACKEND_CRYPTOMINISAT)
+    throw BadParameterException("the cryptominisat backend is not compiled in (vendored CryptoMiniSat was absent at build time); build it and `make clean && make`, or pick another --backend");
+#endif
+
   // The clause-strengthening reducer is currently wired for the tinisat backend only.
   if (strengthen && backend != BACKEND_TINISAT)
     throw BadParameterException("--strengthen is currently only supported with the tinisat backend");

@@ -398,6 +398,10 @@ def run_local(profile, workdir, results_csv):
                     flag += "  <-- INVALID SOL"; failures += 1
                 if models is not None and verdict == "SAT" and not complete:
                     flag += "  <-- INCOMPLETE"; failures += 1
+                if verdict.startswith("ERR"):       # crash / backend not built -- flag it (counted in health below)
+                    flag += "  <-- ERR (crashed / backend unavailable)"
+                elif verdict == "TIMEOUT":
+                    flag += "  <-- TIMEOUT"
                 print("   %-13s %-9s ranks=%d  %-7s sols=%-4d %6.2fs%s"
                       % (MODES[mode][0], dag_label, ranks, verdict, nsol, dt, flag))
         # cross-mode verdict parity on each DAG
@@ -412,6 +416,32 @@ def run_local(profile, workdir, results_csv):
         if reference is not None and prob["expected"] != "?" and reference != prob["expected"]:
             print("   note: declared expected=%s but ground truth=%s (trusting measured)"
                   % (prob["expected"], reference))
+
+    # Backend health: a backend that ERRORs, or never produces a definite verdict,
+    # is a FAILURE -- not silently excluded. This is the "tests passed but the
+    # backend wasn't built / crashed" trap (an unavailable backend aborts -> ERR,
+    # which used to be dropped from the parity check). TIMEOUT is not counted as an
+    # error here (it's a real run that ran out of time), but is reported.
+    health = {}
+    for r in rows:
+        h = health.setdefault(r["backend"], {"solved": 0, "err": 0, "timeout": 0})
+        v = r["verdict"]
+        if v in ("SAT", "UNSAT"):
+            h["solved"] += 1
+        elif v == "TIMEOUT":
+            h["timeout"] += 1
+        else:
+            h["err"] += 1
+    print("\n--- backend health (did each backend actually solve anything?) ---")
+    for be in sorted(health):
+        h = health[be]
+        note = ""
+        if h["solved"] == 0:
+            note = "  <-- NEVER produced a result (crashed / backend not built?)"; failures += 1
+        elif h["err"]:
+            note = "  <-- %d ERROR(S)" % h["err"]; failures += 1
+        print("   %-14s solved=%-3d err=%-3d timeout=%-3d%s"
+              % (be, h["solved"], h["err"], h["timeout"], note))
 
     with open(results_csv, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else
@@ -519,6 +549,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", choices=list(PROFILES), default="local")
     ap.add_argument("--quick", action="store_true", help="shortcut for --profile quick")
+    ap.add_argument("--modes", help="comma list overriding the profile's modes, e.g. 5,11,12 "
+                    "(0 tinisat 1 +sls 4 minisat 5 cadical 6 +sls 7 cms 8/9 +sls 11 glucose 12 lingeling)")
     ap.add_argument("--emit-hpc", metavar="DIR", help="(hpc) write SLURM array + problems to DIR")
     ap.add_argument("--results", default=os.path.join(HERE, "results.csv"))
     ap.add_argument("--keep", action="store_true", help="keep the scratch workdir")
@@ -526,15 +558,20 @@ def main():
 
     if args.quick:
         args.profile = "quick"
-    profile = PROFILES[args.profile]
+    profile = dict(PROFILES[args.profile])   # copy so --modes override doesn't mutate the global
+    if args.modes:
+        profile["modes"] = [int(x) for x in args.modes.split(",")]
 
     if not os.path.exists(DAGSTER_BIN):
         print("dagster binary not found at %s (run make)" % DAGSTER_BIN, file=sys.stderr)
         sys.exit(1)
 
     if args.profile == "hpc" or args.emit_hpc:
+        eprof = dict(PROFILES["hpc"])
+        if args.modes:
+            eprof["modes"] = [int(x) for x in args.modes.split(",")]
         outdir = args.emit_hpc or os.path.join(HERE, "hpc")
-        emit_hpc(PROFILES["hpc"], outdir)
+        emit_hpc(eprof, outdir)
         sys.exit(0)
 
     workdir = tempfile.mkdtemp(prefix="dagster_matrix_")

@@ -113,9 +113,16 @@ def autotune_depth(cnf, target, timeout, log):
             log("  autotune: -d %d timed out (%.0fs); using -d %s (%d cubes)" % (d, timeout, last_d, last_n))
             break
         if status == "cubes":
-            log("  autotune: -d %-2d -> %d cubes" % (d, n))
+            log("  autotune: -d %-2d -> %d cubes (%.0fs)" % (d, n, secs))
             last_d, last_n = d, n
             if n >= target:
+                break
+            # per-node lookahead is fixed per formula, so the next (deeper) probe
+            # costs ~geometrically more. If this probe already ate a big chunk of
+            # the budget, a deeper one will just time out -- stop now rather than
+            # waste a whole --march-timeout on a doomed probe (the big-CNF trap).
+            if secs > timeout / 3.0:
+                log("  autotune: -d %d used %.0fs (>1/3 of budget); stopping before a doomed deeper probe" % (d, secs))
                 break
     if os.path.exists(probe):
         os.remove(probe)
@@ -138,7 +145,9 @@ def main():
                     help="wall-clock budget for march in seconds (default: 300)")
     ap.add_argument("--march-depth", type=int, default=None, help="march -d (cut depth)")
     ap.add_argument("--march-free-vars", type=int, default=None, help="march -n (free-var cutoff)")
-    ap.add_argument("--cube-limit", type=int, default=None, help="march -l (max cubes)")
+    ap.add_argument("--cube-limit", type=int, default=None,
+                    help="march -l (max cubes). NOTE: -l can hang on some formulas -- prefer --march-depth "
+                         "(the --march-timeout still bounds it)")
     ap.add_argument("--target-cubes", type=int, default=None,
                     help="auto-tune the march cut-depth to produce ~this many cubes "
                          "(ignored if --march-depth/--march-free-vars set)")
@@ -211,8 +220,12 @@ def main():
     elif status.startswith("solved"):
         log("cube: march SOLVED the formula directly (%s) -- no cubing needed" % status)
     elif status == "TIMEOUT":
-        log("cube: march timed out after %ds (try a shallower cutoff: --march-depth / "
-            "--march-free-vars, or stronger --symbreak)" % args.march_timeout)
+        log("cube: march timed out after %ds. march's per-node lookahead scales with formula\n"
+            "      size, so on a BIG cnf cubing is a slow LINEAR grind (~ cubes x per-node-cost),\n"
+            "      not 'almost done' -- a longer timeout buys proportionally more cubes, no more.\n"
+            "      Options: raise --march-timeout for more cubes; set a fixed shallow --march-depth\n"
+            "      (one fast pass); or for a many-VARIABLE cnf prefer DAG decomposition (dagmake.py)\n"
+            "      over cube-and-conquer -- march's lookahead is the wrong tool there." % args.march_timeout)
         print("STATUS TIMEOUT  CUBES 0  SECONDS %.2f  FORMULA %s" % (secs, final_cnf))
         sys.exit(2)
     else:
