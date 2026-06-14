@@ -92,6 +92,26 @@ SPECS = [
     dict(family="ramsey", params=(15, 8, 0), track="open"),   # n=8 open case, past the refuted range
     dict(family="ramsey", params=(14, 13, 0), track="open"),  # n=13 open case
 
+    # --- domatic number of the n-cube Q_n: "is d(Q_n) >= k?" (k disjoint dominating
+    #     sets). Colour value-precedence breaking (sound, ~2.6x; subsumes BreakID --
+    #     see Benchmarks/domatic/domatic.py). The Q_7 pair is a coding-theory ANCHOR:
+    #     k=8 SAT (Hamming [7,4] perfect code -> perfect domatic partition) and k=9
+    #     UNSAT (degree bound d <= n+1 = 8) together PROVE d(Q_7)=8 -- a self-checking
+    #     SAT/UNSAT regression pair whose answer is known independently of any solver.
+    dict(family="domatic", params=(5, 3), track="known"),     # SAT
+    dict(family="domatic", params=(6, 4), track="known"),     # SAT
+    dict(family="domatic", params=(7, 5), track="known"),     # SAT
+    dict(family="domatic", params=(7, 8), track="known"),     # SAT  (Hamming perfect code)
+    dict(family="domatic", params=(7, 9), track="known"),     # UNSAT (degree bound -> d(Q_7)=8)
+    dict(family="domatic", params=(8, 6), track="known"),     # SAT  (~4s under the oracle cap)
+    # hard frontier: Q_8 k=7 TIMEOUTs single-core under EVERY breaking (raw/BreakID/
+    # colour all >180s) -> a cube-and-conquer / HPC scaling target.
+    dict(family="domatic", params=(8, 7), track="hard"),
+    # OPEN research prize: the domatic number of Q_10. No perfect 1-code exists for
+    # n=10 (11 does not divide 2^10), so d(Q_10) <= 10; the exact value is open.
+    # k=10 probes the top of that range (~10k vars -> size=large, HPC-only).
+    dict(family="domatic", params=(10, 10), track="open"),
+
     # --- BIG: genuinely HARD instances for HPC speedup demos -----------------
     # Too hard to solve in the labelling cap (minutes+ single-core), so the verdict
     # is the KNOWN answer by construction; `size="large"` keeps them OUT of the
@@ -154,6 +174,25 @@ def generate(family, params):
                 for b in range(a + 1, h + 1):
                     clauses.append([-var(a, hole), -var(b, hole)])             # no two pigeons share a hole
         nv = (h + 1) * h
+        with open(cnf, "w") as f:
+            f.write("p cnf %d %d\n" % (nv, len(clauses)))
+            for c in clauses:
+                f.write(" ".join(map(str, c)) + " 0\n")
+        with open(dag, "w") as f:
+            f.write("DAG-FILE\nNODES:1\nGRAPH:\nCLAUSES:\n0:0-%d\nREPORTING:\n1-%d\n" % (len(clauses) - 1, nv))
+        return name, cnf, dag
+    if family == "domatic":
+        # "is the domatic number of Q_n >= k?" -- k disjoint dominating sets of the
+        # n-cube. Generated with colour value-precedence breaking (sound, verdict-
+        # preserving, ~2.6x faster than raw; subsumes BreakID -- see domatic/domatic.py).
+        # Emit the CNF + a single-node DAG over it (the conquer formula).
+        n, k = params
+        sys.path.insert(0, os.path.join(HERE, "domatic"))
+        import domatic as _dom
+        name = "domatic_%d_%d" % (n, k)
+        cnf = os.path.join(GEN_DIR, name + ".cnf")
+        dag = os.path.join(GEN_DIR, name + ".dag")
+        nv, clauses = _dom.generate(n, k, symbreak="colour")
         with open(cnf, "w") as f:
             f.write("p cnf %d %d\n" % (nv, len(clauses)))
             for c in clauses:
