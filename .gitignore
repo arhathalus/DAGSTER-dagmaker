@@ -1,0 +1,34 @@
+# Build artifacts and regenerable outputs (do not track).
+# Vendored solver build outputs under */cadical/, */cryptominisat/, */minisat/,
+# glucose/, gnovelty/ are intentionally NOT ignored here -- their committed libs
+# (e.g. libcadical.a) are dependencies the build links against.
+
+# compiled objects / dependency files
+*.o
+*.om
+*.lo
+*.d
+
+# python caches
+*.pyc
+__pycache__/
+
+# profiling
+gmon.out
+
+# shared libraries built on demand (IPASIR backends, etc.)
+*.so
+
+# built binaries (rebuild with make)
+/dagster/dagster
+/c_pro/c_pro
+/Benchmarks/costas/generate_costas_N
+/Benchmarks/ramsey/generate_ramsey_NM
+
+# harness run outputs (regenerated each run)
+/dagster/tests/*/results.csv
+/dagster/tests/*/local_results.csv
+
+# scratch solver outputs
+*.sols
+out.sols
