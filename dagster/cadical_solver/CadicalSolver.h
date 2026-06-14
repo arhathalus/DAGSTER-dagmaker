@@ -27,7 +27,7 @@ License for more details.
 
 // forward-declare so callers (Worker.cpp) don't need CaDiCaL's headers;
 // cadical.hpp is included only in CadicalSolver.cc.
-namespace CaDiCaL { class Solver; class Learner; }
+namespace CaDiCaL { class Solver; class Learner; class ExternalPropagator; }
 // forward-declare the SLS guidance channel (mpi-only, defined in ../SlsChannel.h)
 class SlsChannel;
 // forward-declare the clause-sharing endpoint (defined in ../clause_share/)
@@ -59,6 +59,14 @@ public:
   CaDiCaL::Learner* clause_learner;  // owned; connected to `solver`
   int clause_node_vc;                // export only clauses over vars <= this
 
+  // --- optional LIVE clause import (phase 2; NULL unless --share-live) ---
+  // When set, shared clauses are injected DURING the CDCL search (not just
+  // between cubes) via CaDiCaL's external-propagator hook. Requires all node
+  // vars to be `observed` (hence frozen -> no variable elimination), so it is
+  // an opt-in experiment; see utilities/cube/CLAUSE_SHARING_SCOPE.md.
+  CaDiCaL::ExternalPropagator* clause_propagator;  // owned; connected to `solver`
+  bool live_share;                                 // import mid-solve (else only at run() start)
+
   bool has_proof;                    // a DRAT proof trace was opened (close on dtor)
 
   // plain incremental CaDiCaL (no SLS). inprocess_level tunes CaDiCaL's own
@@ -69,9 +77,11 @@ public:
   // proof_path (when non-NULL) writes a DRAT proof of this solve -- it too must
   // be opened in CONFIGURING, so it is a ctor param. Intended for an UNSAT solve
   // of a single node (no enumeration / sharing); see utilities/cube/PROOF_SCOPE.md.
+  // live_share (only meaningful with clause_comm) imports shared clauses during
+  // the solve via an external propagator, instead of only at the start of run().
   CadicalSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET,
                 MPI_Comm* clause_comm = NULL, int clause_max_size = 8,
-                const char* proof_path = NULL);
+                const char* proof_path = NULL, bool live_share = false);
   // CaDiCaL guided by gnovelty helpers over communicator_sls. max_vc bounds the
   // SLS solution buffer; phase tags this message (matches the helpers).
   CadicalSolver(Cnf* cnf, MPI_Comm* communicator_sls, int suggestion_size,

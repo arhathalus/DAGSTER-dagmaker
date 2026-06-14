@@ -48,6 +48,7 @@ Arguments::Arguments() { // all the default arguments
   use_sls = -1;
   use_strengthen = -1;
   use_share = -1;
+  use_live_share = -1;
   clause_share_max_size = 8;
   proof_filename = NULL;
   inprocess = "";
@@ -87,6 +88,7 @@ Arguments::Arguments() { // all the default arguments
 #define OPT_SHARE_MAX  1007
 #define OPT_PROOF      1008
 #define OPT_IPASIR_LIB 1009
+#define OPT_SHARE_LIVE 1010
 
 static char doc[] = "Uses MPI to spawn SAT solvers working on different parts of a problem\nneed to specify a CNF file and associated DAG structure\nsee documenation for specifications.";
 static char args_doc[] = "DAG_FILE CNF_FILE";
@@ -112,6 +114,7 @@ static struct argp_option options[] = {
   { "cubes", OPT_CUBES, "FILE", 0, "cube-and-conquer: seed the conquer node with march cubes from FILE (lines 'a <lits> 0')"},
   { "share", OPT_SHARE, 0, 0, "clause sharing: dedicate one rank as a hub relaying learned clauses between cube-and-conquer workers (cadical backend only)"},
   { "share-max-size", OPT_SHARE_MAX, "N", 0, "max length of a learned clause shared via --share (default 8; must be >= 3)"},
+  { "share-live", OPT_SHARE_LIVE, 0, 0, "phase-2 clause sharing: import shared clauses DURING the solve via CaDiCaL's external propagator (implies --share; experimental -- freezes all vars, disabling variable elimination)"},
   { "proof", OPT_PROOF, "FILE", 0, "emit a DRAT UNSAT proof per worker to FILE.<rank> (cadical backend; single-node UNSAT solve)"},
 
   { "OUTPUT_FILE", 'o', "OUTPUT_FILE", 0, "the filename to be outputted to"},
@@ -205,6 +208,10 @@ static error_t parse_option( int key, char *arg, struct argp_state *state )
     break;
   case OPT_SHARE:
     arguments->use_share = 1;
+    break;
+  case OPT_SHARE_LIVE:
+    arguments->use_live_share = 1;
+    arguments->use_share = 1;   // live import needs the hub
     break;
   case OPT_SHARE_MAX:
     PARSE_ARGUMENT(arguments->clause_share_max_size,"--share-max-size::clause_share_max_size");

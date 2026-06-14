@@ -268,8 +268,13 @@ inline void MpiBuffer::sendBufferOut() {
   buffersOut[bufferOut][-1] = end;
 
   int sendLength;
+  // Cover indices [-PADDING .. data_end] inclusive. Non-cycled: [-PADDING..end] =
+  // end+PADDING+1 ints. Cycled (full buffer): the whole buffer [-PADDING..sizeOut-1]
+  // = sizeOut+PADDING ints -- NOT sizeOut+PADDING+1, which would read one int past
+  // the data region and exceed the receiver's Irecv size (sizeIn+PADDING), giving
+  // MPI_ERR_TRUNCATE once a buffer fully cycles (exposed by phase-2 live sharing).
   if (end > beginning) sendLength = end + PADDING + 1;
-  else                 sendLength = sizeOut + PADDING + 1;
+  else                 sendLength = sizeOut + PADDING;
   if (sendLength > MAX_BUFFER_SIZE) VLOG(0) << "sendLength = " << sendLength;
  
   MPI_Isend(buffersOut[bufferOut]-PADDING, sendLength, MPI_INT, partnerRank, outwardClauseTag, *communicator, &outwardClauseRequests[bufferOut]);

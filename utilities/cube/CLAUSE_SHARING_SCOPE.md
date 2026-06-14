@@ -10,8 +10,19 @@
 > unique, relayed 200; workers imported 55×); **UNSAT verdict parity** (`-m 5` vs
 > `-m 10`); **SAT parity** (sudoku, 64 cubes — byte-identical solution, validated
 > against all 3241 clauses); edge cases (n=3 min topology, n=2 guard) and 3×
-> stability all pass. Phase 2 (during-solve import via `ExternalPropagator`,
-> LBD/adaptive filtering) remains future work; §5 below is the original plan.
+> stability all pass.
+>
+> **STATUS — phase 2 (live import) BUILT.** `--share-live` (implies `--share`)
+> imports shared clauses *during* the solve via a `CaDiCaL::ExternalPropagator`
+> (`ClauseImportPropagator`, inline in `CadicalSolver.cc`), instead of only between
+> cubes. The export side already streamed mid-solve (the `Learner` fires during
+> search and `MpiBuffer::pushClause` auto-ships), so phase 2 closes only the
+> *import* gap. Cost: external clauses must be over **observed** (hence frozen)
+> variables, so we observe every node var → **variable elimination is disabled**;
+> hence it is opt-in and instance-dependent. Soundness is the same invariant as
+> phase 1 (only entailed learned clauses are in the pool), and imported clauses are
+> added **forgettable**. Verified: verdict parity `--share` vs `--share-live`
+> (domatic_7_8 SAT, php_13 UNSAT, `-e 0`). See §7 for the measured regime.
 
 
 
@@ -181,3 +192,48 @@ the `MpiBuffer` transport and the SLS-style topology split, and the deadlock
 surface is smaller than SLS (no collective window). Gate every step on
 `tests/cube_matrix`. Defer during-solve import and fancy filtering to phase 2 once
 phase 1 shows a measurable win on the HPC.
+
+---
+
+## 7. Phase 2 — `--share-live` (BUILT & MEASURED)
+
+`--share-live` (implies `--share`) imports shared clauses *during* the solve via a
+`CaDiCaL::ExternalPropagator` (`ClauseImportPropagator`, inline in `CadicalSolver.cc`).
+The export side already streamed mid-solve (the `Learner` fires during search and
+`MpiBuffer::pushClause` auto-ships), so phase 2 only closes the **import** gap: with
+plain `--share`, `run()` imports once *before* `solve()`, so during a long single-cube
+solve no shared clauses enter the search.
+
+**Design.** The propagator's `cb_has_external_clause` drains the channel's **IN** side
+only (counter-gated every 64 polls); it must NOT flush the OUT side, since the export
+`Learner` ships on the same `MpiBuffer`'s OUT buffer during the same solve — two
+interleaved `testAndSwitchBufferOut` callers race the double-buffer's `Isend`. Imported
+clauses are added **forgettable** (entailed ⇒ CaDiCaL may drop them on reduction).
+Soundness is the §1 invariant. **Cost:** external clauses must be over *observed* (hence
+frozen) variables, so we `add_observed_var` every node var → **variable elimination is
+disabled**. Connect the propagator *before* observing (CaDiCaL rejects the reverse).
+
+**Two latent `MpiBuffer` bugs fixed along the way** (phase 2's higher relay volume on
+long solves exposed them; both are pre-existing and benefit all users):
+1. **Send overrun (off-by-one).** `sendBufferOut` sent `sizeOut+PADDING+1` ints when a
+   buffer fully cycled, one past the data region and one more than the receiver's
+   `Irecv` (`sizeIn+PADDING`) → `MPI_ERR_TRUNCATE`. Fixed to `sizeOut+PADDING`.
+2. **Cyclic-wrap parse fragility.** Once a buffer fully *cycles*, `getClause` can land
+   its read pointer on a stray `0` mid-region and assert (`TODO`-flagged code). Properly
+   fixing the wrap parse is future work; for now `MAX_BUFFER_SIZE` is raised 1024 → 16384
+   so these workloads don't cycle a buffer in practice. **Known limitation:** a
+   sufficiently large clause burst could still cycle a buffer and hit the wrap bug.
+
+**Measured (4-core box, oversubscribed `-n 6`; same buffer size for fairness):**
+
+| instance | single-core | `--share` (phase 1) | `--share-live` (phase 2) |
+|---|---|---|---|
+| php_13 (UNSAT, 1024 short cubes) | TIMEOUT >300s | UNSAT 54.6s | UNSAT 52.7s |
+| domatic_8_7 (SAT, 256 long cubes) | SAT 287s | **TIMEOUT >420s** | **SAT 281s** |
+
+Verdict parity `--share` vs `--share-live` confirmed (domatic_7_8 SAT, php_13 UNSAT,
+`-e 0`). **Takeaway:** on short cubes live ≈ batch (no regression despite losing BVE).
+On **long cubes phase 2 wins decisively** — between-cube import is too infrequent when a
+cube solve runs for minutes, and mid-solve import rescues the SAT-cube-restart penalty
+that makes plain cube-and-conquer lose to single-core. `--share-live` is **experimental**
+(observe-all disables elimination; the wrap-bug limitation above) — phase 1 stays default.

@@ -41,13 +41,80 @@ private:
   std::vector<int> pending;
 };
 
+// Phase-2 LIVE import: feeds shared clauses from the hub into CaDiCaL DURING the
+// CDCL search. CaDiCaL polls cb_has_external_clause() through propagation; we
+// drain the channel into a staging queue and stream clauses one at a time.
+// SOUNDNESS: the pool holds only CDCL learned clauses, each entailed by the node
+// formula regardless of the cube, so injecting them mid-search is verdict-
+// preserving; we mark them forgettable so CaDiCaL may drop them on database
+// reduction (bounded memory). CaDiCaL requires external clauses to be over
+// OBSERVED variables -- CadicalSolver observes all node vars before connecting
+// this. The notify_* hooks fire constantly, so they are no-ops; the channel
+// drain (a real cost) is counter-gated since the hook is polled very often.
+class ClauseImportPropagator : public CaDiCaL::ExternalPropagator {
+public:
+  ClauseImportPropagator(ClauseChannel* ch, int node_vc)
+      : channel(ch), node_vc(node_vc), poll(0), pos(0) {
+    is_lazy = false;  // poll during search, not only at complete assignments
+  }
+  void notify_assignment(const std::vector<int>&) override {}
+  void notify_new_decision_level() override {}
+  void notify_backtrack(size_t) override {}
+  bool cb_check_found_model(const std::vector<int>&) override { return true; }
+  int cb_decide() override { return 0; }
+  int cb_propagate() override { return 0; }
+  int cb_add_reason_clause_lit(int) override { return 0; }
+
+  bool cb_has_external_clause(bool& is_forgettable) override {
+    is_forgettable = true;  // entailed -> safe for CaDiCaL to delete on reduction
+    if (staging.empty()) {
+      // this hook fires very often; only pay for a channel drain periodically.
+      if ((++poll % POLL_EVERY) != 0) return false;
+      // IMPORT ONLY here. We must NOT flush the outbound buffer from this
+      // callback: the export Learner ships on the same MpiBuffer's OUT side
+      // during this very solve (its pushClause auto-ships), and two interleaved
+      // testAndSwitchBufferOut callers race the double-buffer's Isend request
+      // (fatal MPI_Test error on long solves). Draining only the IN side keeps
+      // the propagator (IN) and the Learner (OUT) on disjoint request handles.
+      channel->import([&](const int* lits, int n) {
+        if (n < 1) return;
+        for (int i = 0; i < n; i++)
+          if (lits[i] == 0 || std::abs(lits[i]) > node_vc) return;  // skip unsound/observed-out
+        staging.emplace_back(lits, lits + n);
+      });
+      if (staging.empty()) return false;
+    }
+    cur = std::move(staging.front());
+    staging.pop_front();
+    cur.push_back(0);  // 0-terminate for the streaming protocol
+    pos = 0;
+    return true;
+  }
+
+  // stream the current clause literal-by-literal, ending with the 0 terminator.
+  int cb_add_external_clause_lit() override {
+    int lit = cur[pos++];
+    if (lit == 0) { cur.clear(); pos = 0; }  // clause fully delivered
+    return lit;
+  }
+
+private:
+  ClauseChannel* channel;       // not owned (shared with the export learner)
+  int node_vc;
+  unsigned poll;
+  static const unsigned POLL_EVERY = 64;
+  std::deque<std::vector<int> > staging;  // clauses pulled from the hub, awaiting injection
+  std::vector<int> cur;                   // clause currently being streamed (0-terminated)
+  size_t pos;
+};
+
 // CaDiCaL uses DIMACS literals directly: add(lit)/add(0) to add a clause,
 // assume(lit) for the next solve, solve() -> 10 SAT / 20 UNSAT / 0 unknown,
 // val(var) -> >0 if true, <0 if false.  No 0-based offset (unlike MiniSat).
 
 CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
                              MPI_Comm* clause_comm, int clause_max_size,
-                             const char* proof_path) {
+                             const char* proof_path, bool live_share) {
   this->cnf = new Cnf(c);
   this->mark2 = (bool*)calloc(sizeof(bool), c->vc + 1);
   this->solver_unit_contradiction = false;
@@ -59,6 +126,8 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
   this->clause_channel = NULL; // clause sharing off unless clause_comm given
   this->clause_learner = NULL;
   this->clause_node_vc = c->vc;
+  this->clause_propagator = NULL;
+  this->live_share = live_share;
   this->has_proof = false;
   this->solver = new CaDiCaL::Solver();
   // DRAT proof tracing must be opened in CONFIGURING (before any var/clause), or
@@ -94,6 +163,17 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
     this->clause_channel = new ClauseChannel(clause_comm, comm_size - 1, clause_max_size);
     this->clause_learner = new ClauseExportLearner(clause_channel, clause_max_size, c->vc);
     this->solver->connect_learner(this->clause_learner);
+    // Phase-2 live import: connect the importer FIRST (CaDiCaL rejects
+    // add_observed_var without a connected propagator), then observe every node
+    // variable. External clauses must be over observed -- hence frozen --
+    // variables, so this disables variable elimination: the cost of live
+    // sharing. The vars exist (declare_more_variables(c->vc) above).
+    if (live_share) {
+      this->clause_propagator = new ClauseImportPropagator(this->clause_channel, c->vc);
+      this->solver->connect_external_propagator(this->clause_propagator);
+      for (int v = 1; v <= c->vc; v++)
+        this->solver->add_observed_var(v);
+    }
   }
 }
 
@@ -163,6 +243,10 @@ CadicalSolver::~CadicalSolver() {
   // Disconnect the learner before tearing the solver down, then free the
   // clause-sharing endpoints. (The hub teardown is signalled by the Worker, not
   // here, so an idle worker that never built a solver still releases the hub.)
+  if (this->clause_propagator != NULL) {
+    this->solver->disconnect_external_propagator();
+    delete this->clause_propagator;
+  }
   if (this->clause_learner != NULL) {
     this->solver->disconnect_learner();
     delete this->clause_learner;
@@ -239,7 +323,9 @@ int CadicalSolver::run(Message* m) {
   // Clause sharing: pull in clauses other workers learned and add them to our
   // database before this solve. Sound because each is entailed by the (shared)
   // node formula; permanent because this CaDiCaL is incremental across cubes.
-  if (clause_channel != NULL) {
+  // When live_share is on, the external propagator imports DURING the solve
+  // instead, so skip this once-per-solve batch import.
+  if (clause_channel != NULL && !live_share) {
     int imported = 0;
     clause_channel->import([&](const int* lits, int n) {
       for (int i = 0; i < n; i++) solver->add(lits[i]);

@@ -300,7 +300,8 @@ void Worker::initialise_solver_from_message(Message* m) {
           proof_arg = proof_path.c_str();
         }
         solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to), inprocess_level,
-            communicator_clause, command_line_arguments.clause_share_max_size, proof_arg);
+            communicator_clause, command_line_arguments.clause_share_max_size, proof_arg,
+            command_line_arguments.use_live_share == 1);
       }
     }
     if (m->additional_clauses != NULL) {

@@ -79,6 +79,11 @@ struct Arguments {
   // that relays learned clauses between conquer workers. -1 unset / 0 / 1.
   int use_share;
 
+  // Phase-2 live clause sharing (CaDiCaL only): import shared clauses DURING the
+  // solve via the external propagator, not just between cubes. Implies use_share.
+  // Experimental (observes/freezes all vars -> no elimination). -1 unset / 0 / 1.
+  int use_live_share;
+
   // DRAT proof emission (CaDiCaL only): each worker writes a checkable UNSAT proof
   // to <proof_filename>.<rank>. NULL = off. Intended for a single-node UNSAT solve
   // (no enumeration/sharing); see utilities/cube/PROOF_SCOPE.md.
