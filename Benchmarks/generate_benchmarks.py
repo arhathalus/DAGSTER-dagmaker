@@ -104,9 +104,11 @@ SPECS = [
     dict(family="domatic", params=(7, 8), track="known"),     # SAT  (Hamming perfect code)
     dict(family="domatic", params=(7, 9), track="known"),     # UNSAT (degree bound -> d(Q_7)=8)
     dict(family="domatic", params=(8, 6), track="known"),     # SAT  (~4s under the oracle cap)
-    # hard frontier: Q_8 k=7 TIMEOUTs single-core under EVERY breaking (raw/BreakID/
-    # colour all >180s) -> a cube-and-conquer / HPC scaling target.
-    dict(family="domatic", params=(8, 7), track="hard"),
+    # Q_8 k=7: SAT, settled by a long single-core run (287s, colour-broken) -> d(Q_8) >= 7.
+    # Too slow for the oracle cap (and slow under EVERY breaking: raw/BreakID/colour all
+    # >180s), so it lives on the `big` track with its known verdict, size forced large
+    # (HPC-only). A cube-and-conquer + clause-sharing scaling target.
+    dict(family="domatic", params=(8, 7), track="big", expected="SAT", size="large"),
     # OPEN research prize: the domatic number of Q_10. No perfect 1-code exists for
     # n=10 (11 does not divide 2^10), so d(Q_10) <= 10; the exact value is open.
     # k=10 probes the top of that range (~10k vars -> size=large, HPC-only).

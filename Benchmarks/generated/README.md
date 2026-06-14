@@ -69,9 +69,15 @@ added clauses; see the generator's docstring).
 The `known` rows include a **self-certifying coding-theory anchor**: `domatic_7_8`
 is SAT because the Hamming [7,4] perfect code partitions Q_7 into 8 dominating sets,
 and `domatic_7_9` is UNSAT by the degree bound d(G) ≤ δ+1 = 8 — together they
-**prove d(Q_7) = 8** independently of any solver. `domatic_8_7` is the `hard`
-frontier: single-core CaDiCaL times out past 180 s under *every* breaking
-(raw / BreakID / colour), so it's a cube-and-conquer / HPC target.
+**prove d(Q_7) = 8** independently of any solver. `domatic_8_7` is on the `big`
+track: SAT, settled by a long single-core run (287 s on the colour-broken CNF),
+so **d(Q_8) ≥ 7**. It's too slow for the oracle cap (and slow under *every*
+breaking — raw / BreakID / colour all > 180 s), hence `size=large` (HPC-only); a
+cube-and-conquer + clause-sharing scaling target. (Note: parallel cube-and-conquer
+helps on *exhaustive UNSAT* search; on a SAT instance like this the per-cube fresh
+restart fights the single solver's global learning, so the win needs genuinely many
+cores — the clause-sharing speedup demo proper lives on the pigeonhole UNSAT ladder
+in `cube_matrix`.)
 
 **OPEN target — `domatic_10_10`.** The domatic number of Q_10 is open. No perfect
 1-code exists for n = 10 (11 ∤ 2^10), so d(Q_10) ≤ 10; whether it reaches 10 is

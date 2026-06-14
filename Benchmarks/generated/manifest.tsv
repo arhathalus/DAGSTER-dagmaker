@@ -31,4 +31,4 @@ domatic	domatic_7_5	7x5	known	640	2560	small	SAT	ok	0.566	Benchmarks/generated/d
 domatic	domatic_7_8	7x8	known	1024	5632	small	SAT	ok	0.155	Benchmarks/generated/domatic_7_8.cnf	Benchmarks/generated/domatic_7_8.dag
 domatic	domatic_7_9	7x9	known	1152	6912	small	UNSAT		0.163	Benchmarks/generated/domatic_7_9.cnf	Benchmarks/generated/domatic_7_9.dag
 domatic	domatic_8_6	8x6	known	1536	6912	small	SAT	ok	3.558	Benchmarks/generated/domatic_8_6.cnf	Benchmarks/generated/domatic_8_6.dag
-domatic	domatic_8_7	8x7	hard	1792	8960	small	TIMEOUT		60.0	Benchmarks/generated/domatic_8_7.cnf	Benchmarks/generated/domatic_8_7.dag
+domatic	domatic_8_7	8x7	big	1792	8960	large	SAT	known	286.9	Benchmarks/generated/domatic_8_7.cnf	Benchmarks/generated/domatic_8_7.dag
