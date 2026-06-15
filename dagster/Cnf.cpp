@@ -318,7 +318,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp)==NULL)
@@ -421,7 +421,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp, const vector<int> &indices) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp)==NULL)
@@ -543,7 +543,7 @@ void Cnf::load_DIMACS_Cnf(FILE* ifp, RangeSet &set_indices) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB if no 'p cnf' header is found
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp) == NULL)
@@ -827,8 +827,13 @@ void Cnf::add_unitary_clause(int unit) {
 
   int var = abs(unit);
   if (var>vc) {
-    vc = var;
+    // free BEFORE growing vc: the occurence/neighbourhood buffers were sized to
+    // the old vc, and free_occurence_and_neighborhood_buffers() loops to vc*2+1,
+    // so bumping vc first walks past the allocation and free()s garbage (heap
+    // corruption -> SIGSEGV, seen in the gnovelty helper compiling tree-shaped
+    // decompositions whose interface assignments add higher-indexed unit clauses).
     free_occurence_and_neighborhood_buffers();
+    vc = var;
   }
   clauses[cc-1][0] = unit;
   
@@ -864,8 +869,10 @@ void Cnf::add_clause(int* clause) {
     int literal = clause[i];
     int var = abs(literal);
     if (var>vc) {
-      vc = var; // increase the variable count
+      // free BEFORE growing vc (see add_unitary_clause): the buffers are sized
+      // to the old vc, so freeing after the bump overruns the allocation.
       free_occurence_and_neighborhood_buffers();// trigger occurence/neighborhood buffer reset()
+      vc = var; // increase the variable count
     }
     clauses[cc-1][i] = literal;
   }

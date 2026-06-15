@@ -32,7 +32,7 @@ If not, see <http://www.gnu.org/licenses/>.
 
 #include <mpi.h>
 
-const int MAX_BUFFER_SIZE = 1024;
+const int MAX_BUFFER_SIZE = 16384;
 
 /** 
  * The actual values in buffers are padded by 3, to fit:

@@ -1,0 +1,3 @@
+# built checker binary (regenerable: gcc -O2 -o drat-trim drat-trim.c -lm)
+drat-trim
+*.drat

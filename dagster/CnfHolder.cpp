@@ -163,7 +163,7 @@ int CnfHolder::split_CNF(char* cnf_filename, vector<RangeSet> &indices) {
   TEST_NOT_NULL(literals = (int *) malloc(max_clause_len * sizeof(int)))
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB / garbage return if no 'p cnf' header
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp) == NULL)
@@ -258,7 +258,7 @@ int CnfHolder::pseudo_split_CNF(char* cnf_filename) {
   char c;
   
   // search for and read the header
-  int header_vc, header_cc;
+  int header_vc = 0, header_cc = 0;  // init: avoid UB / garbage return if no 'p cnf' header
   while((c=getc(ifp)) != EOF){ 
     if (isspace(c)) continue; else ungetc(c,ifp);
     if (fgets(line, len, ifp) == NULL)

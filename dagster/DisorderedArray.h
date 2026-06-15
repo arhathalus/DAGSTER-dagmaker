@@ -32,7 +32,7 @@ private:
   int length_MAX;
   void setup(int length_MAX) {
     this->length_MAX = length_MAX;
-    buffer = (T*)malloc(sizeof(T*)*length_MAX);
+    buffer = (T*)malloc(sizeof(T)*length_MAX);
     length = 0;
   }
 public:
@@ -50,7 +50,7 @@ public:
   void add(T m) {
     if (length+1 > length_MAX) {
       length_MAX *= 2;
-      buffer = (T*)realloc(buffer, sizeof(T*)*length_MAX);
+      buffer = (T*)realloc(buffer, sizeof(T)*length_MAX);
     }
     buffer[length++] = m;
   }

@@ -1,0 +1,8 @@
+*.kdev4
+build/
+experiments/
+paper/
+test_asp/
+/result
+.cache
+compile_commands.json

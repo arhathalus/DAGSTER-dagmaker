@@ -42,6 +42,16 @@ If not, see <http://www.gnu.org/licenses/>.
 #define MPI_TAG_CNF_SEND 11
 #define MPI_TAG_DAG_SEND 12
 
+// Clause sharing (cube-and-conquer): N conquer workers <-> a single clause hub.
+//   W2H / H2W carry MpiBuffer clause traffic; KILL is a one-shot teardown
+//   signal each worker sends the hub as it shuts down (hub exits after N).
+#define CLAUSE_SHARE_W2H_TAG 60
+#define CLAUSE_SHARE_H2W_TAG 61
+#define CLAUSE_SHARE_KILL_TAG 62
+// MpiBuffer discards traffic from a mismatched phase; the sharing channel is
+// long-lived (the whole conquer) so worker and hub both pin one phase.
+#define CLAUSE_SHARE_PHASE 0
+
 #define TINISAT_RANK 0
 #define REDUCER_RANK 1
 #define TINISAT_TO_REDUCER_CLAUSE_TAG 0

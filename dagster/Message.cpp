@@ -81,7 +81,9 @@ int Message::dehydrate(int *data) {
   data[upto++] = to;
   data[upto++] = from;
   data[upto++] = (additional_clauses != NULL);
-  data[upto++] = assignments.size();
+  // assignment count is bounded by (#vars + max_depth) << INT_MAX in any real
+  // problem; cast explicitly so the size_t->int narrowing is intentional.
+  data[upto++] = (int)assignments.size();
   for (long unsigned int i = 0; i < assignments.size(); i++)
     data[upto++] = assignments[i];
   int size = upto;

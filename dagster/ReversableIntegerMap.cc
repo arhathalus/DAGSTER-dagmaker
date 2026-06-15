@@ -107,7 +107,7 @@ inline int ReversableIntegerMap::get_forward_map(int v) {
 }
 
 inline int ReversableIntegerMap::get_reverse_map(int v) {
-  if ((v<0)||(v>size))
+  if ((v<0)||(v>=size))   // reverse_map has `size` elements: index size is OOB
     return -1;
   return reverse_map[v];
 }

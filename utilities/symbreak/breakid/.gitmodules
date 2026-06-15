@@ -1,0 +1,3 @@
+[submodule "examples"]
+	path = examples
+	url = https://github.com/meelgroup/breakid_test_cnfs.git

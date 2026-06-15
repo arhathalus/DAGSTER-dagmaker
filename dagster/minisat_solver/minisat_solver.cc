@@ -31,18 +31,26 @@ If not, see <http://www.gnu.org/licenses/>.
 
 #include "../SatSolverInterface.h"
 #include "SimpSolver.h"
+#include "../SlsChannel.h"
+#include <glog/logging.h>
 
 using namespace Minisat;
 
 
-MinisatSolver::MinisatSolver(Cnf* cnf) {
+MinisatSolver::MinisatSolver(Cnf* cnf, int inprocess_level) {
 DB(printf("adding CNF to minisatsolver\n");
 cnf->print();)
 	this->cnf = new Cnf(cnf);
 	this->mark2 = (bool*)calloc(sizeof(bool),cnf->vc+1);
 	this->solver_unit_contradiction = false;
+	this->sls = NULL;            // plain mode: no SLS guidance
+	this->sls_phase = 0;
+	this->sls_suggestion_size = 0;
+	this->sls_prefix = NULL;
+	this->sls_sol_buf = NULL;
 	this->unit_assignments.clear(true);
     verbosity=0;
+    set_inprocessing(inprocess_level);   // tune SimpSolver simplification before load
     while (cnf->vc > nVars()) newVar();
     vec<Lit> lits;
     int var;
@@ -60,7 +68,28 @@ cnf->print();)
     //eliminate(true);
   }
 
+// -m 8: same base load as -m 4, then stand up the SLS guidance channel. The
+// SlsChannel constructor is COLLECTIVE, so this must be reached in lockstep with
+// the gnovelty helpers' window allocation (the Worker guarantees this, mirroring
+// the SatSolver / CadicalSolver SLS path).
+MinisatSolver::MinisatSolver(Cnf* cnf, MPI_Comm* communicator_sls,
+                             int suggestion_size, int max_vc, int phase,
+                             int inprocess_level)
+    : MinisatSolver(cnf, inprocess_level) {
+  this->sls_phase = phase;
+  this->sls_suggestion_size = suggestion_size;
+  this->sls_prefix = (int*)calloc(cnf->vc + 1, sizeof(int));
+  this->sls_sol_buf = (int*)calloc(max_vc + 2, sizeof(int));
+  this->sls = new SlsChannel(communicator_sls, suggestion_size, max_vc + 2);
+}
+
 MinisatSolver::~MinisatSolver() {
+  // delete the channel FIRST: its destructor signals completion to the helpers
+  // and frees the collective window before teardown.
+  if (this->sls != NULL)
+    delete this->sls;
+  free(this->sls_prefix);
+  free(this->sls_sol_buf);
   free(this->mark2);
   delete this->cnf;
 }
@@ -148,6 +177,30 @@ int MinisatSolver::run(Message *m) {
     if (absent)
       lits.push(this->unit_assignments[i]);
   }
+
+  if (sls != NULL && sls->active()) {
+    // 1. hand the current partial assignment to a helper as a search prefix
+    int len = 0;
+    for (int j = 0; j < m->assignments.size() && len < cnf->vc; j++)
+      sls_prefix[len++] = m->assignments[j];
+    sls->send_prefix(sls_prefix, len, 0);
+    // 2. apply the helper's suggestions as preferred polarities. MiniSat's
+    //    polarity[v]==true means the var is decided NEGATIVE first, so a positive
+    //    suggestion (want true) sets polarity false and vice-versa.
+    int applied = 0, s;
+    while (applied < sls_suggestion_size && (s = sls->next_suggestion(1)) != 0) {
+      int var0 = abs(s) - 1;
+      if (var0 >= 0 && var0 < nVars()) {
+        setPolarity(var0, s < 0);   // s>0 -> prefer true (polarity false)
+        applied++;
+      }
+    }
+    if (applied > 0)
+      VLOG(3) << "SLS seeded " << applied << " phase hints into MiniSat";
+    // 3. drain any full solution a helper shipped (channel hygiene)
+    sls->poll_solution(sls_sol_buf, cnf->vc + 2, sls_phase);
+  }
+
   bool ret = solve(lits, false, false);
   DB(printf("returning %i\n",ret);)
   return ret;
@@ -195,6 +248,28 @@ bool MinisatSolver::reset_solver() {
   //search(0);
   cancelUntil(0);
   return true;
+}
+
+// Tune the SimpSolver simplification machinery (MiniSat's inprocessing knobs).
+void MinisatSolver::set_inprocessing(int level) {
+  switch (level) {
+    case INPROCESS_OFF:
+      use_simplification = false;   // no preprocessing / variable elimination
+      break;
+    case INPROCESS_LIGHT:
+      use_simplification = true;
+      use_elim   = false;           // skip the expensive bounded variable elimination
+      use_asymm  = false;
+      use_rcheck = false;
+      break;
+    case INPROCESS_HEAVY:
+      use_simplification = true;
+      use_elim   = true;
+      use_asymm  = true;            // asymmetric-branching clause shrinking
+      use_rcheck = true;            // drop already-implied clauses (costly)
+      break;
+    default: /* INPROCESS_DEFAULT / UNSET: leave MiniSat defaults */ break;
+  }
 }
 bool MinisatSolver::solver_add_conflict_clause(std::deque<int> d) {
   vec<Lit> lits;

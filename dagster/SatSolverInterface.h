@@ -30,6 +30,18 @@ If not, see <http://www.gnu.org/licenses/>.
 #include <algorithm>
 #include <vector>
 
+// Inprocessing aggressiveness for the CDCL backend's OWN clause-strengthening
+// machinery (vivification / subsumption / probing / variable elimination). This
+// is the backend-native equivalent of the external strengthener (which only
+// makes sense for tinisat, having no inprocessing of its own).
+enum InprocessLevel {
+  INPROCESS_UNSET   = -1,  // do not touch the backend defaults
+  INPROCESS_OFF     = 0,   // disable inprocessing entirely
+  INPROCESS_LIGHT   = 1,   // cheap techniques only (no elim/probe/etc.)
+  INPROCESS_DEFAULT = 2,   // backend defaults (no change)
+  INPROCESS_HEAVY   = 3,   // enable all techniques, more aggressively
+};
+
 //SatSolverInterface:
 // a minimal virtual class of functions that will be the outward presenting face of any class that handles and processes any CDCL procedure
 class SatSolverInterface {

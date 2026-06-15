@@ -254,6 +254,7 @@ void BDDSolutions::readd_message(Message* m) {
         Cudd_Ref(var);
       }
       tmp = Cudd_bddAnd(ddmgr, dis, var);
+      Cudd_Ref(tmp);   // must ref the AND result before dereffing its operands
       Cudd_RecursiveDeref(ddmgr, dis);
       Cudd_RecursiveDeref(ddmgr, var);
       dis = tmp;
