@@ -1,7 +1,8 @@
 # Build artifacts and regenerable outputs (do not track).
-# Vendored solver build outputs under */cadical/, */cryptominisat/, */minisat/,
-# glucose/, gnovelty/ are intentionally NOT ignored here -- their committed libs
-# (e.g. libcadical.a) are dependencies the build links against.
+# Vendored solvers cadical/ and cryptominisat/ are git SUBMODULES (built locally;
+# their build/ output, incl. libcadical.a, is untracked and produced by `make`).
+# Vendored SOURCE under minisat/, glucose/, gnovelty/ IS tracked, but their build
+# objects (*.o/*.om) are not -- those patterns are below.
 
 # compiled objects / dependency files
 *.o
@@ -19,16 +20,27 @@ gmon.out
 # shared libraries built on demand (IPASIR backends, etc.)
 *.so
 
-# built binaries (rebuild with make)
+# built binaries (rebuild with make / build scripts)
 /dagster/dagster
 /c_pro/c_pro
 /Benchmarks/costas/generate_costas_N
 /Benchmarks/ramsey/generate_ramsey_NM
+/Benchmarks/gensat_sat/ggen
+/dagster/gnovelty/simple_standalone/gnovelty
+/dagster/standalone_tinisat/tinisat
+/utilities/cube/march_cu/march_cu
 
 # harness run outputs (regenerated each run)
 /dagster/tests/*/results.csv
 /dagster/tests/*/local_results.csv
 
-# scratch solver outputs
+# scratch solver outputs / editor backups
 *.sols
 out.sols
+dag_out.txt
+*~
+/Benchmarks/Pentomino/TEMPORARY_FILE*.cnf
+
+# Claude Code local state (tool-local, not for tracking)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
