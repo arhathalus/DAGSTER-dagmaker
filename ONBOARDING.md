@@ -96,6 +96,7 @@ USAGE.md  HPC_RUN.md  ONBOARDING.md(this)
 
 | goal | command |
 |---|---|
+| first checkout | `git clone --recursive …` (or after a plain clone: `git submodule update --init`) — pulls the CaDiCaL & CryptoMiniSat **submodules** |
 | build | `cd dagster && make` |
 | solve a CNF | `python3 utilities/solve.py problem.cnf --run` |
 | force cube + sharing | `python3 utilities/solve.py problem.cnf --route cube --share --run` |
@@ -106,6 +107,16 @@ USAGE.md  HPC_RUN.md  ONBOARDING.md(this)
 | generate test data | `cd Benchmarks && python3 generate_benchmarks.py` |
 | benchmark on HPC | see `HPC_RUN.md` (emit + sbatch + collect.py) |
 | add a backend | build `libipasirX.so`, `--backend ipasir --ipasir-lib X.so` (see `dagster/ipasir_solver/README.md`) |
+
+**Vendored solvers (submodules).** `dagster/cadical_solver/cadical` and
+`dagster/cryptominisat_solver/cryptominisat` are git submodules (see `.gitmodules`),
+pinned to upstream release tags (CaDiCaL `rel-3.0.0`, CryptoMiniSat `5.11.21`). The
+build links their **static libs**, which are NOT committed — build them once after
+checkout (`cd dagster/cadical_solver/cadical && ./configure && make`; CryptoMiniSat
+via its CMake `build/`). `make` auto-detects each `lib*.a`; if absent it builds
+*without* that backend and says so (selecting a missing backend then errors clearly).
+So the submodules are only needed for the CaDiCaL/CryptoMiniSat backends — a plain
+clone still builds the tinisat/minisat core.
 
 CLI reference + the new-user flow: `USAGE.md`.
 

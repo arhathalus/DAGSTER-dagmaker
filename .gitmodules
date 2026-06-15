@@ -1,0 +1,6 @@
+[submodule "dagster/cadical_solver/cadical"]
+	path = dagster/cadical_solver/cadical
+	url = https://github.com/arminbiere/cadical
+[submodule "dagster/cryptominisat_solver/cryptominisat"]
+	path = dagster/cryptominisat_solver/cryptominisat
+	url = https://github.com/msoos/cryptominisat.git
