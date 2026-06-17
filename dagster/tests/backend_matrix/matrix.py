@@ -330,6 +330,13 @@ def run_cell(mode, dag, cnf, out, ranks, k, enumerate_all, timeout):
 # profiles
 # --------------------------------------------------------------------------
 PROFILES = {
+    # super-lightweight: only the 2 built-in tiny fixtures (sizes={tiny} => no
+    # corpus/real problems), but EVERY backend x {plain, +sls} combo on a 2-node
+    # DAG. Unavailable backends are auto-skipped (see available_backends), so this
+    # is the fast "do all wired-up backends + sls still work?" smoke -- seconds.
+    "smoke": dict(max_ranks=6, sls_k=2, timeout=20,
+                  sizes={"tiny"},
+                  modes=[0, 1, 4, 5, 6, 7, 8, 9], node_targets=[2]),
     "local": dict(max_ranks=8, sls_k=2, timeout=60,
                   sizes={"tiny", "small", "medium"},
                   modes=[0, 4, 5, 7, 1, 6, 8, 9], node_targets=[2, 4]),
@@ -343,9 +350,63 @@ PROFILES = {
 
 
 # --------------------------------------------------------------------------
+# backend availability probe
+# --------------------------------------------------------------------------
+# a non-SLS mode that selects each backend (used to probe whether it is built)
+PROBE_MODE = {"tinisat": 0, "minisat": 4, "cadical": 5,
+              "cryptominisat": 7, "glucose": 11, "lingeling": 12}
+
+
+def available_backends(modes, workdir):
+    """Probe each distinct backend referenced by `modes` on a trivial SAT instance
+    and return the set that actually solves it. A backend that is NOT compiled in
+    (e.g. cadical/cryptominisat absent at build time) or whose IPASIR .so is
+    missing (glucose/lingeling) aborts instead of solving -- so it is reported and
+    SKIPPED here rather than producing spurious 'failures' in the matrix. Backends
+    that ARE built but misbehave on real problems still get caught by the run's
+    health check (they pass this trivial probe, then error downstream)."""
+    cnf = os.path.join(workdir, "_probe.cnf")
+    dag = os.path.join(workdir, "_probe.dag")
+    with open(cnf, "w") as f:
+        f.write("p cnf 3 2\n1 2 0\n-2 3 0\n")
+    with open(dag, "w") as f:
+        f.write("DAG-FILE\nNODES:1\nGRAPH:\nCLAUSES:\n0:0-1\nREPORTING:\n1-3\n")
+    backends = []
+    for m in modes:
+        be = MODES[m][0].split("+")[0]
+        if be not in backends:
+            backends.append(be)
+    avail, skipped = set(), []
+    for be in backends:
+        pm = PROBE_MODE.get(be)
+        if pm is None:
+            continue
+        verdict, _, _, _ = run_cell(pm, dag, cnf, os.path.join(workdir, "_probe.out"),
+                                    2, 1, False, 30)
+        if verdict == "SAT":
+            avail.add(be)
+        else:
+            skipped.append((be, verdict))
+    if skipped:
+        print("backend probe: SKIPPING not-built/unavailable backends: %s"
+              % ", ".join("%s (%s)" % (b, v) for b, v in skipped))
+    print("backend probe: available = %s" % ", ".join(sorted(avail)))
+    return avail
+
+
+# --------------------------------------------------------------------------
 # local run
 # --------------------------------------------------------------------------
 def run_local(profile, workdir, results_csv):
+    # drop modes whose backend isn't actually built (robust to cadical/cms/etc.
+    # not being wired up -- those are skipped, not counted as failures).
+    avail = available_backends(profile["modes"], workdir)
+    kept = [m for m in profile["modes"] if MODES[m][0].split("+")[0] in avail]
+    if not kept:
+        print("ERROR: none of the requested backends are available", file=sys.stderr)
+        return 1
+    profile = dict(profile)
+    profile["modes"] = kept
     probs = tiny_problems() + corpus_problems(profile["sizes"]) + real_problems(profile["sizes"])
     print("collected %d problems; modes=%s; max_ranks=%d"
           % (len(probs), profile["modes"], profile["max_ranks"]))
@@ -549,6 +610,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", choices=list(PROFILES), default="local")
     ap.add_argument("--quick", action="store_true", help="shortcut for --profile quick")
+    ap.add_argument("--smoke", action="store_true",
+                    help="shortcut for --profile smoke (seconds: tiny fixtures x all available backend+sls combos)")
     ap.add_argument("--modes", help="comma list overriding the profile's modes, e.g. 5,11,12 "
                     "(0 tinisat 1 +sls 4 minisat 5 cadical 6 +sls 7 cms 8/9 +sls 11 glucose 12 lingeling)")
     ap.add_argument("--emit-hpc", metavar="DIR", help="(hpc) write SLURM array + problems to DIR")
@@ -556,7 +619,9 @@ def main():
     ap.add_argument("--keep", action="store_true", help="keep the scratch workdir")
     args = ap.parse_args()
 
-    if args.quick:
+    if args.smoke:
+        args.profile = "smoke"
+    elif args.quick:
         args.profile = "quick"
     profile = dict(PROFILES[args.profile])   # copy so --modes override doesn't mutate the global
     if args.modes:

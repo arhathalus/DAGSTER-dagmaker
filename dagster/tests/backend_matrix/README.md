@@ -46,18 +46,31 @@ guaranteed single-node baseline.
 
 ## Profiles
 
-| profile | ranks | instances | timeout | runs where |
-|---|---|---|---|---|
-| `quick` | ≤6 | tiny + small | 30 s | locally (smoke) |
-| `local` | ≤8 | tiny + small + medium | 60 s | locally (your 7–8-core box) |
-| `hpc` | ≤128 | small + medium + large | 2 h | **emitted** as a SLURM array |
+| profile | ranks | instances | modes | timeout | runs where |
+|---|---|---|---|---|---|
+| `smoke` | ≤6 | **tiny fixtures only** | **all backends × {plain,+sls}** | 20 s | locally (~25 s — fastest all-combo check) |
+| `quick` | ≤6 | tiny + small | 4 plain backends | 30 s | locally |
+| `local` | ≤8 | tiny + small + medium | all backends × {plain,+sls} | 60 s | locally (your 7–8-core box) |
+| `hpc` | ≤128 | small + medium + large | all (incl. +sls) | 2 h | **emitted** as a SLURM array |
+
+`smoke` is the super-lightweight "do all wired-up backends + sls combinations
+still work?" check: just the two built-in tiny fixtures, every backend × {plain,
++sls}, on a single + 2-node DAG. Use it as the fast pre-commit sanity.
+
+**Unavailable backends are auto-skipped.** Before the matrix, every profile probes
+each backend on a trivial SAT instance; a backend that isn't built (cadical /
+cryptominisat not compiled in, or a missing glucose/lingeling IPASIR `.so`) is
+reported and **skipped**, not counted as a failure. So `matrix.py` works whether
+or not cadical et al. are wired up — it tests what's actually built. (A backend
+that IS built but misbehaves on real problems still fails via the health check.)
 
 ## Usage
 
 ```bash
 # local regression (serial, your workstation)
+python3 matrix.py --smoke                  # ~25 s: all backends + sls combos on tiny fixtures
 python3 matrix.py --profile local          # -> results.csv + timing summary, exit 0/1
-python3 matrix.py --quick                  # fastest smoke subset
+python3 matrix.py --quick                  # tiny + small, plain backends only
 
 # HPC: generate a SLURM job array (one array task per cell) — does NOT run here
 python3 matrix.py --profile hpc --emit-hpc ./hpc
