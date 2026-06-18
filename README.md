@@ -35,12 +35,23 @@ Subproblems are solved in parallel by solving units, which communicate using mes
 
 ## Dependencies:
 
-The following packages are required for the full compilation of Dagster:
+The following packages are required for the full compilation of Dagster
+(see **[BUILDING.md](BUILDING.md)** for the ordered, copy-pasteable recipe):
 
- - [Google Logging library 'glog'](https://github.com/google/glog)
- - MPI (tested with [OpenMPI](https://www.open-mpi.org/))
- - the [CUDD library](https://davidkebo.com/cudd)
- - [Google Testing library 'googletest'](https://github.com/google/googletest) - for running tests
+ - MPI (tested with [OpenMPI](https://www.open-mpi.org/)) — `mpic++`/`mpirun`
+ - [Google Logging library 'glog'](https://github.com/google/glog) — `apt install libgoogle-glog-dev`
+ - zlib — `apt install zlib1g-dev`
+ - the [CUDD library](https://davidkebo.com/cudd) — **built from source** (not in apt); install to `/usr/local` and `sudo ldconfig`
+ - [Google Testing library 'googletest'](https://github.com/google/googletest) — for the C++ unit tests only
+
+Two SAT backends are **optional** and vendored as git submodules (clone with
+`--recursive`), each built before Dagster so `make` links them in:
+
+ - [CaDiCaL](https://github.com/arminbiere/cadical) — `--backend cadical` (cube-and-conquer clause sharing, DRAT proofs)
+ - [CryptoMiniSat](https://github.com/msoos/cryptominisat) — `--backend cryptominisat`
+
+Dagster still builds without them (those `--backend` choices then error clearly);
+the core tinisat + minisat backends always build.
 
 
 ## Using Docker
@@ -69,9 +80,18 @@ docker build --no-cache -t milthorpe/async-neighbours .
 
 ## Build
 
+Once the dependencies are in place, building Dagster is just:
+
 ```
 cd dagster && make
 ```
+
+But the dependencies must be built **in order** — in particular CUDD (from
+source) and the CaDiCaL / CryptoMiniSat submodules must exist *before* `make`,
+which auto-detects the optional solver libs. See **[BUILDING.md](BUILDING.md)**
+for the full ordered recipe (submodules → system libs → CUDD → CaDiCaL →
+CryptoMiniSat → dagster), a dependency table, and cross-machine troubleshooting.
+The optional backends are optional: dagster still builds without them.
 
 ## Example Invocation
 

@@ -97,7 +97,7 @@ USAGE.md  HPC_RUN.md  ONBOARDING.md(this)
 | goal | command |
 |---|---|
 | first checkout | `git clone --recursive …` (or after a plain clone: `git submodule update --init`) — pulls the CaDiCaL & CryptoMiniSat **submodules** |
-| build | `cd dagster && make` |
+| build | `cd dagster && make` — but see **[BUILDING.md](BUILDING.md)** for the full ordered recipe (submodules → CUDD-from-source → CaDiCaL → CryptoMiniSat → make) and cross-machine troubleshooting |
 | solve a CNF | `python3 utilities/solve.py problem.cnf --run` |
 | force cube + sharing | `python3 utilities/solve.py problem.cnf --route cube --share --run` |
 | raw solve | `mpirun -n N dagster --backend cadical -e 0 dag cnf -o out` |
