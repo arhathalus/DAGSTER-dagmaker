@@ -4,3 +4,4 @@ libipasir*.so
 glucose/**/*.o
 glucose/**/*.or
 lingeling/
+maple/

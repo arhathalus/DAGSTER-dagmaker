@@ -47,6 +47,34 @@ mpirun -n N dagster --backend lingeling  DAG CNF
 `lingeling/` source dir is git-ignored (you supply it); validated to match the
 other backends on verdicts and enumeration counts.
 
+## MapleSAT (a third drop-in — an engine Painless uses)
+
+MapleSAT (LRB branching; the Maple family Painless bundles) is a MiniSat/Glucose
+descendant, so `maple_glue.cc` is `glucose_glue.cc` with the `Minisat` namespace.
+Supply the source and build:
+
+```sh
+git clone -b assumptions-incremental https://bitbucket.org/JLiangWaterloo/maplesat ipasir_solver/maple
+bash ipasir_solver/build_maple.sh                     # -> libipasirmaplecomsps.so
+mpirun -n N dagster --backend maple  DAG CNF
+```
+
+**Use the `assumptions-incremental` branch — NOT `maplecomsps`.** Dagster drives
+the node solver **incrementally with assumptions** (the DAG interface assignment /
+cubes). The competition `maplecomsps` branch mishandles the model under
+assumptions, so Dagster rejects it (`ipasir backend returned false solution`) on
+any multi-node DAG — it only appears to work on single-node/whole-formula solves.
+The `assumptions-incremental` branch's `maplesat/` is clean (no MathCheck
+programmatic hooks) and **validated to match CaDiCaL** on multi-node enumeration
+(costas5/6/7 → 6/17/30 solutions; UNSAT parity on 4unsat). `build_maple.sh` needs
+`-fpermissive` (a 2017 `friend mkLit()` default-arg that modern g++ rejects). The
+`maple/` source dir is git-ignored (you supply it).
+
+> Note: this is the natural fit for a *whole-formula / portfolio* role (how
+> Painless uses Maple). It also works as a Dagster node backend for DAG
+> decomposition, but Maple is tuned for one-shot competition solving, so on a
+> given instance CaDiCaL is often the stronger node engine — benchmark per family.
+
 ## Adding another IPASIR solver (Maple, CaDiCaL, …)
 
 1. Get its source + an IPASIR glue (most ship one; the glue is ~70 lines, mirror

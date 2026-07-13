@@ -106,7 +106,7 @@ static struct argp_option options[] = {
   { "number of gnovelties per solver", 'k', "novelty_number", 0, "number of gnovelties per sat solver (only in gnovelty mode)"},
   { "gnovelty solution checking time", 'l', "gnovelty_solution_checking_time", 0, "the number decsions that the CDCL will make before checking for a solution from gnovelties"},
   { "MODE", 'm', "MODE", 0, "Legacy numeric operation selector (0-9). Prefer --backend/--sls/--strengthen."},
-  { "backend", OPT_BACKEND, "BACKEND", 0, "CDCL backend: tinisat (default) | minisat | cadical | cryptominisat | glucose | lingeling | ipasir"},
+  { "backend", OPT_BACKEND, "BACKEND", 0, "CDCL backend: tinisat (default) | minisat | cadical | cryptominisat | glucose | lingeling | maple | ipasir"},
   { "ipasir-lib", OPT_IPASIR_LIB, "SO", 0, "path to a libipasir<solver>.so for --backend ipasir (any IPASIR solver, dlopen'd at run time)"},
   { "sls", OPT_SLS, 0, 0, "guide the CDCL search with gNovelty+ SLS helper processes"},
   { "strengthen", OPT_STRENGTHEN, 0, 0, "run a clause-strengthening reducer process (tinisat backend only)"},

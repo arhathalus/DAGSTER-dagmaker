@@ -409,7 +409,12 @@ int main(int argc, char **argv) {
       if (command_line_arguments.ipasir_lib.empty())
         command_line_arguments.ipasir_lib = "ipasir_solver/libipasirlingeling.so";
     }
-    else throw BadParameterException("unknown --backend (use tinisat|minisat|cadical|cryptominisat|glucose|ipasir)");
+    else if (b == "maple") {                    // convenience: ipasir + built MapleSAT .so
+      backend = BACKEND_IPASIR;
+      if (command_line_arguments.ipasir_lib.empty())
+        command_line_arguments.ipasir_lib = "ipasir_solver/libipasirmaplecomsps.so";
+    }
+    else throw BadParameterException("unknown --backend (use tinisat|minisat|cadical|cryptominisat|glucose|lingeling|maple|ipasir)");
     sls = (command_line_arguments.use_sls == 1);
     strengthen = (command_line_arguments.use_strengthen == 1);
     share = (command_line_arguments.use_share == 1);
