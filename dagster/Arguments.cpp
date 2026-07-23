@@ -62,10 +62,12 @@ Arguments::Arguments() { // all the default arguments
   master_sub_mode = 0;
   output_filename = "dag_out.txt";
   ENUMERATE_SOLUTIONS = true;
+  enumerate_set_explicitly = false;
   BREADTH_FIRST_NODE_ALLOCATIONS = false;
   cnf_directory = NULL;
   sat_solution_interrupt = 100;
   sat_reporting_time = 20000;
+  cadical_yield_seconds = 30.0;   // bound termination latency without disrupting search
   gnovelty_solution_checking_time = 50;
   solution_trimming = 1;
   tinisat_restarting = 1;
@@ -89,6 +91,7 @@ Arguments::Arguments() { // all the default arguments
 #define OPT_PROOF      1008
 #define OPT_IPASIR_LIB 1009
 #define OPT_SHARE_LIVE 1010
+#define OPT_YIELD      1011
 
 static char doc[] = "Uses MPI to spawn SAT solvers working on different parts of a problem\nneed to specify a CNF file and associated DAG structure\nsee documenation for specifications.";
 static char args_doc[] = "DAG_FILE CNF_FILE";
@@ -115,6 +118,7 @@ static struct argp_option options[] = {
   { "share", OPT_SHARE, 0, 0, "clause sharing: dedicate one rank as a hub relaying learned clauses between cube-and-conquer workers (cadical backend only)"},
   { "share-max-size", OPT_SHARE_MAX, "N", 0, "max length of a learned clause shared via --share (default 8; must be >= 3)"},
   { "share-live", OPT_SHARE_LIVE, 0, 0, "phase-2 clause sharing: import shared clauses DURING the solve via CaDiCaL's external propagator (implies --share; experimental -- freezes all vars, disabling variable elimination)"},
+  { "yield-seconds", OPT_YIELD, "SECS", 0, "cadical/incremental backends: wall-clock seconds a single solve may run before yielding to the worker so the master can reassign/kill it (default 5; 0 = never yield). Matters for cube-and-conquer termination."},
   { "proof", OPT_PROOF, "FILE", 0, "emit a DRAT UNSAT proof per worker to FILE.<rank> (cadical backend; single-node UNSAT solve)"},
 
   { "OUTPUT_FILE", 'o', "OUTPUT_FILE", 0, "the filename to be outputted to"},
@@ -166,6 +170,7 @@ static error_t parse_option( int key, char *arg, struct argp_state *state )
     break;
   case 'e':
     PARSE_ARGUMENT(arguments->ENUMERATE_SOLUTIONS,"-e::enumerate_solutions");
+    arguments->enumerate_set_explicitly = true;
     break;
   case 'f':
     arguments->cnf_filename = arg;
@@ -212,6 +217,9 @@ static error_t parse_option( int key, char *arg, struct argp_state *state )
   case OPT_SHARE_LIVE:
     arguments->use_live_share = 1;
     arguments->use_share = 1;   // live import needs the hub
+    break;
+  case OPT_YIELD:
+    arguments->cadical_yield_seconds = atof(arg);
     break;
   case OPT_SHARE_MAX:
     PARSE_ARGUMENT(arguments->clause_share_max_size,"--share-max-size::clause_share_max_size");
@@ -275,6 +283,17 @@ static struct argp argp = { options, parse_option, args_doc, doc, 0, 0, 0 };
 
 void Arguments::load(int argc, char **argv) {
   argp_parse(&argp, argc, argv, ARGP_IN_ORDER, 0, this);
+  // Cube-and-conquer default: with --cubes but no explicit -e, exit on the first
+  // solution. Enumerating every solution across all cubes after one is found is
+  // almost never intended and can run for hours past the answer (the master keeps
+  // handing out the remaining cubes). Explicit -e (e.g. -e 1 for counting) is
+  // always respected.
+  if (cubes_filename != NULL && !enumerate_set_explicitly && ENUMERATE_SOLUTIONS != 0) {
+    ENUMERATE_SOLUTIONS = 0;
+    VLOG(0) << "NOTE: --cubes given without an explicit -e; defaulting to -e 0 "
+               "(exit on first solution). Pass -e 1 explicitly to enumerate all "
+               "solutions across cubes.";
+  }
 }
 
 #endif

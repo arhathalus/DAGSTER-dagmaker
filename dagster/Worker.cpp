@@ -299,9 +299,12 @@ void Worker::initialise_solver_from_message(Message* m) {
           proof_path = std::string(command_line_arguments.proof_filename) + "." + std::to_string(comms->world_rank);
           proof_arg = proof_path.c_str();
         }
+        // Don't yield during a proof solve (it must be one self-contained trace);
+        // otherwise arm the configured yield so the worker stays interruptible.
+        double yield = (proof_arg != NULL) ? 0.0 : command_line_arguments.cadical_yield_seconds;
         solvers[solver_index] = new CadicalSolver(cnf_holder->get_Cnf(m->to), inprocess_level,
             communicator_clause, command_line_arguments.clause_share_max_size, proof_arg,
-            command_line_arguments.use_live_share == 1);
+            command_line_arguments.use_live_share == 1, yield);
       }
     }
     if (m->additional_clauses != NULL) {

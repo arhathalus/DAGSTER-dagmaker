@@ -131,6 +131,11 @@ struct Arguments {
 
   // flag whether Dagster should exit after finding the first solution to a terminal node
   int ENUMERATE_SOLUTIONS;
+  // was -e given explicitly on the command line? (default resolution: cube-and-
+  // conquer with --cubes but no explicit -e defaults to exit-on-first, since
+  // enumerating all solutions across every cube after one is found is almost never
+  // intended and can run for hours past the answer).
+  bool enumerate_set_explicitly;
   
   // flag whether dagster should generate depth first on the dag of breadth first
   bool BREADTH_FIRST_NODE_ALLOCATIONS; 
@@ -140,6 +145,12 @@ struct Arguments {
   int sat_solution_interrupt;
   // the number of decisions that the CDCL will make before asking master for a possible reassignment
   int sat_reporting_time;
+  // CaDiCaL/incremental backends: wall-clock seconds a single solve() may run
+  // before it yields control back to the worker (returning "paused"), so the
+  // worker can poll the master and be reassigned or killed promptly instead of
+  // being stuck non-interruptibly in a long solve. Mirrors sat_reporting_time for
+  // the native solver. 0 disables yielding (old behaviour: solve to completion).
+  double cadical_yield_seconds;
   // the number decsions that the CDCL will make before checking for a solution from gnovelties
   int gnovelty_solution_checking_time;
   

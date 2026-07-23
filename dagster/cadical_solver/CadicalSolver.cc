@@ -108,13 +108,30 @@ private:
   size_t pos;
 };
 
+// Aborts a solve once a wall-clock deadline passes, so run() returns 2 ("paused")
+// and the worker yields to the master (which can resume, reassign, or kill it).
+// CaDiCaL polls terminate() at bounded points; we only read the clock every Kth
+// call to keep the check cheap regardless of poll frequency.
+class CadicalTerminator : public CaDiCaL::Terminator {
+public:
+  CadicalTerminator() : deadline(-1.0), calls(0) {}
+  bool terminate() override {
+    if (deadline < 0.0) return false;         // yielding disabled for this solve
+    if ((++calls & 0x3FF) != 0) return false; // check the clock ~every 1024 polls
+    return MPI_Wtime() >= deadline;
+  }
+  double deadline;      // absolute MPI_Wtime past which to abort; <0 = never
+  unsigned long calls;  // free-running poll counter
+};
+
 // CaDiCaL uses DIMACS literals directly: add(lit)/add(0) to add a clause,
 // assume(lit) for the next solve, solve() -> 10 SAT / 20 UNSAT / 0 unknown,
 // val(var) -> >0 if true, <0 if false.  No 0-based offset (unlike MiniSat).
 
 CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
                              MPI_Comm* clause_comm, int clause_max_size,
-                             const char* proof_path, bool live_share) {
+                             const char* proof_path, bool live_share,
+                             double yield_seconds) {
   this->cnf = new Cnf(c);
   this->mark2 = (bool*)calloc(sizeof(bool), c->vc + 1);
   this->solver_unit_contradiction = false;
@@ -128,6 +145,8 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
   this->clause_node_vc = c->vc;
   this->clause_propagator = NULL;
   this->live_share = live_share;
+  this->terminator = NULL;
+  this->yield_seconds = yield_seconds;
   this->has_proof = false;
   this->solver = new CaDiCaL::Solver();
   // DRAT proof tracing must be opened in CONFIGURING (before any var/clause), or
@@ -174,6 +193,12 @@ CadicalSolver::CadicalSolver(Cnf* c, int inprocess_level,
       for (int v = 1; v <= c->vc; v++)
         this->solver->add_observed_var(v);
     }
+  }
+  // Solve yielding: let a long solve be interrupted so the worker stays responsive
+  // to the master (cube-and-conquer termination). run() arms the deadline per solve.
+  if (yield_seconds > 0.0) {
+    this->terminator = new CadicalTerminator();
+    this->solver->connect_terminator(this->terminator);
   }
 }
 
@@ -253,6 +278,10 @@ CadicalSolver::~CadicalSolver() {
   }
   if (this->clause_channel != NULL)
     delete this->clause_channel;
+  if (this->terminator != NULL) {
+    this->solver->disconnect_terminator();
+    delete this->terminator;
+  }
   // flush + close the DRAT proof so the trace file is complete before teardown
   if (this->has_proof)
     this->solver->close_proof_trace(false);
@@ -366,14 +395,24 @@ int CadicalSolver::run(Message* m) {
     sls->poll_solution(sls_sol_buf, cnf->vc + 2, sls_phase);
   }
 
-  int res = solver->solve();                      // 10 = SATISFIABLE
+  // arm the yield deadline for this solve (the terminator aborts once it passes)
+  if (terminator != NULL)
+    ((CadicalTerminator*)terminator)->deadline = MPI_Wtime() + yield_seconds;
+
+  int res = solver->solve();                      // 10 = SAT, 20 = UNSAT, 0 = unknown
 
   // ship clauses learned during this solve (buffered by the export learner) on
   // to the hub for the other workers.
   if (clause_channel != NULL)
     clause_channel->flush();
 
-  return (res == 10) ? 1 : 0;
+  // 10 -> SAT (1), 20 -> UNSAT (0), 0 -> unknown: the terminator yielded, so
+  // report "paused" (2). The worker then polls the master; a resumed solve()
+  // continues from the retained incremental state. (Without a terminator res is
+  // never 0, so behaviour is unchanged when yielding is disabled.)
+  if (res == 10) return 1;
+  if (res == 20) return 0;
+  return 2;
 }
 
 void CadicalSolver::load_into_message(Message* m, RangeSet &r, Message* reference_message) {

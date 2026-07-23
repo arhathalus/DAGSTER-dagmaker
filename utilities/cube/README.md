@@ -71,11 +71,28 @@ Key options / behaviours:
 mpirun -n <ranks> dagster --backend cadical -e 0 --cubes cubes.icnf conquer.dag formula.cube.cnf
 ```
 
-`--backend cadical` is the recommended backend; `-e 0` races to the first SAT cube (drop
-for full enumeration). The master seeds one message per cube into node 0 (the
-whole formula) and distributes them to the `ranks-1` workers. Verdict: SAT if any
-cube is SAT (with a model), UNSAT if all cubes are UNSAT. Verified verdict-correct
-on SAT and UNSAT instances.
+`--backend cadical` is the recommended backend; `-e 0` races to the first SAT cube.
+The master seeds one message per cube into node 0 (the whole formula) and
+distributes them to the `ranks-1` workers. Verdict: SAT if any cube is SAT (with a
+model), UNSAT if all cubes are UNSAT. Verified verdict-correct on SAT and UNSAT
+instances.
+
+**`-e` defaults to `0` (exit-on-first) when `--cubes` is given** and you don't set
+`-e` yourself. This matters: with `-e 1` (enumerate) the run does *not* stop when a
+solution is found — it grinds every remaining cube looking for all solutions, which
+on a hard instance can run for hours past the answer. Pass `-e 1` explicitly only
+if you genuinely want to enumerate solutions across cubes.
+
+**Termination is responsive.** A conquer worker yields its solve back to the master
+every `--yield-seconds` (default 30) so that once one worker finds a solution
+(under `-e 0`), workers still grinding other (possibly very hard) cubes are stopped
+within ~that interval instead of blocking the whole job until their cube finishes.
+Lower it for snappier termination, or `--yield-seconds 0` to disable (a worker then
+runs each cube to completion uninterruptibly — the old behaviour). The solver is
+incremental, so a yielded solve resumes where it left off; verified verdict- and
+count-identical to no-yield. (Yielding is implemented for `--backend cadical` and
+the native tinisat; the IPASIR backends — glucose/lingeling/maple — still run each
+cube to completion, as their glue does not honour a terminate callback yet.)
 
 ## Clause sharing (`--share`)
 

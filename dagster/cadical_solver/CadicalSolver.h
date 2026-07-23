@@ -27,7 +27,7 @@ License for more details.
 
 // forward-declare so callers (Worker.cpp) don't need CaDiCaL's headers;
 // cadical.hpp is included only in CadicalSolver.cc.
-namespace CaDiCaL { class Solver; class Learner; class ExternalPropagator; }
+namespace CaDiCaL { class Solver; class Learner; class ExternalPropagator; class Terminator; }
 // forward-declare the SLS guidance channel (mpi-only, defined in ../SlsChannel.h)
 class SlsChannel;
 // forward-declare the clause-sharing endpoint (defined in ../clause_share/)
@@ -69,6 +69,16 @@ public:
 
   bool has_proof;                    // a DRAT proof trace was opened (close on dtor)
 
+  // --- optional solve yielding (cube-and-conquer termination responsiveness) ---
+  // CaDiCaL runs solve() to completion by default, so a worker stuck on a hard
+  // cube can't see the master's terminate/reassign until it finishes. A terminator
+  // aborts the solve after yield_seconds of wall-clock, so run() returns 2
+  // ("paused") and the worker polls the master (which may resume, reassign, or
+  // kill it) -- mirroring the native solver's periodic pause. The solver state is
+  // retained (incremental), so a resumed solve continues where it left off.
+  CaDiCaL::Terminator* terminator;   // owned; connected to `solver` (NULL if disabled)
+  double yield_seconds;              // solve budget before yielding; <=0 disables
+
   // plain incremental CaDiCaL (no SLS). inprocess_level tunes CaDiCaL's own
   // inprocessing and MUST be applied before clauses are added (CaDiCaL only
   // accepts set() in its CONFIGURING state), so it is passed to the ctor.
@@ -79,9 +89,13 @@ public:
   // of a single node (no enumeration / sharing); see utilities/cube/PROOF_SCOPE.md.
   // live_share (only meaningful with clause_comm) imports shared clauses during
   // the solve via an external propagator, instead of only at the start of run().
+  // yield_seconds (>0) makes a single solve() yield ("paused", run() returns 2)
+  // after that many wall-clock seconds so the worker can poll the master; 0 = run
+  // solves to completion (old behaviour).
   CadicalSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET,
                 MPI_Comm* clause_comm = NULL, int clause_max_size = 8,
-                const char* proof_path = NULL, bool live_share = false);
+                const char* proof_path = NULL, bool live_share = false,
+                double yield_seconds = 0.0);
   // CaDiCaL guided by gnovelty helpers over communicator_sls. max_vc bounds the
   // SLS solution buffer; phase tags this message (matches the helpers).
   CadicalSolver(Cnf* cnf, MPI_Comm* communicator_sls, int suggestion_size,
