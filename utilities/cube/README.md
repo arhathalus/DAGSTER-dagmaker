@@ -90,9 +90,11 @@ within ~that interval instead of blocking the whole job until their cube finishe
 Lower it for snappier termination, or `--yield-seconds 0` to disable (a worker then
 runs each cube to completion uninterruptibly — the old behaviour). The solver is
 incremental, so a yielded solve resumes where it left off; verified verdict- and
-count-identical to no-yield. (Yielding is implemented for `--backend cadical` and
-the native tinisat; the IPASIR backends — glucose/lingeling/maple — still run each
-cube to completion, as their glue does not honour a terminate callback yet.)
+count-identical to no-yield on every backend. Yielding is implemented for **all
+backends**: cadical via its native terminator, lingeling via `lglseterm`, and the
+minisat-derived engines (minisat, glucose, maple) by chunking the search with a
+conflict budget and checking the deadline between chunks. (The native tinisat has
+always yielded, via `-j`/`sat_reporting_time`.)
 
 ## Clause sharing (`--share`)
 

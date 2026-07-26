@@ -58,7 +58,15 @@ class MinisatSolver : public SatSolverInterface, public SimpSolver {
 
   bool prune_solution(Message* reference_message);
 
-  MinisatSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET);  // plain incremental MiniSat
+  // Wall-clock seconds a single solve may run before yielding ("paused", run()
+  // returns 2) so the worker can poll the master and be reassigned/killed instead
+  // of blocking non-interruptibly. 0 = solve to completion (old behaviour).
+  // Implemented by chunking solveLimited() by a conflict budget and checking the
+  // deadline between chunks (MiniSat has no during-search callback). See run().
+  double yield_seconds;
+
+  MinisatSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET,
+                double yield_seconds = 0.0);  // plain incremental MiniSat
   // MiniSat guided by gnovelty helpers over communicator_sls
   MinisatSolver(Cnf* cnf, MPI_Comm* communicator_sls, int suggestion_size,
                 int max_vc, int phase, int inprocess_level = INPROCESS_UNSET);

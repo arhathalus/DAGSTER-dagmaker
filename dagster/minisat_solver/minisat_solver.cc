@@ -37,12 +37,13 @@ If not, see <http://www.gnu.org/licenses/>.
 using namespace Minisat;
 
 
-MinisatSolver::MinisatSolver(Cnf* cnf, int inprocess_level) {
+MinisatSolver::MinisatSolver(Cnf* cnf, int inprocess_level, double yield_seconds) {
 DB(printf("adding CNF to minisatsolver\n");
 cnf->print();)
 	this->cnf = new Cnf(cnf);
 	this->mark2 = (bool*)calloc(sizeof(bool),cnf->vc+1);
 	this->solver_unit_contradiction = false;
+	this->yield_seconds = yield_seconds;
 	this->sls = NULL;            // plain mode: no SLS guidance
 	this->sls_phase = 0;
 	this->sls_suggestion_size = 0;
@@ -201,9 +202,32 @@ int MinisatSolver::run(Message *m) {
     sls->poll_solution(sls_sol_buf, cnf->vc + 2, sls_phase);
   }
 
-  bool ret = solve(lits, false, false);
-  DB(printf("returning %i\n",ret);)
-  return ret;
+  if (yield_seconds <= 0.0) {
+    bool ret = solve(lits, false, false);       // solve to completion (no yielding)
+    DB(printf("returning %i\n",ret);)
+    return ret;
+  }
+  // Yielding: MiniSat has no during-search callback, so chunk the search by a
+  // conflict budget and check a wall-clock deadline between chunks. solveLimited
+  // returns l_Undef only when the budget is hit (not yet solved); the conflict
+  // counter and learned clauses persist across chunks (and across run() calls), so
+  // this resumes rather than restarts. Returns 2 ("paused") on the deadline; the
+  // worker then polls the master (resume / reassign / kill).
+  const int64_t CHUNK = 50000;                  // conflicts between wall-clock checks
+  double deadline = MPI_Wtime() + yield_seconds;
+  for (;;) {
+    setConfBudget(CHUNK);
+    lbool res = solveLimited(lits, false, false);
+    if (res != l_Undef) {                       // SAT or UNSAT -> done
+      budgetOff();
+      return (res == l_True) ? 1 : 0;
+    }
+    if (MPI_Wtime() >= deadline) {              // budget hit and past the deadline -> yield
+      budgetOff();
+      return 2;
+    }
+    // else: another chunk (still within the time budget)
+  }
 }
 
 

@@ -319,7 +319,8 @@ void Worker::initialise_solver_from_message(Message* m) {
             communicator_sls, command_line_arguments.suggestion_size,
             cnf_holder->max_vc, phase++, inprocess_level);
       } else {                          // plain incremental MiniSat
-        solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to), inprocess_level);
+        solvers[solver_index] = new MinisatSolver(cnf_holder->get_Cnf(m->to), inprocess_level,
+            command_line_arguments.cadical_yield_seconds);
       }
     }
     if (m->additional_clauses != NULL) {
@@ -345,7 +346,7 @@ void Worker::initialise_solver_from_message(Message* m) {
   else if (backend == BACKEND_IPASIR) {
     if (solvers[solver_index] == NULL)              // any IPASIR solver, loaded from --ipasir-lib
       solvers[solver_index] = new IpasirSolver(cnf_holder->get_Cnf(m->to),
-          command_line_arguments.ipasir_lib.c_str());
+          command_line_arguments.ipasir_lib.c_str(), command_line_arguments.cadical_yield_seconds);
     if (m->additional_clauses != NULL) {
       solvers[solver_index]->append_cnf(m->additional_clauses);
     }

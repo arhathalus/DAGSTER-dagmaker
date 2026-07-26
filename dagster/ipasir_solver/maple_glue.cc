@@ -22,6 +22,8 @@ struct Wrap {
   Solver* s;
   vec<Lit> clause;       // literals buffered until a 0 terminator
   vec<Lit> assumptions;  // assumptions for the next solve
+  int (*terminate)(void*);  // IPASIR terminate callback (NULL = run to completion)
+  void* term_state;
 };
 // map a DIMACS literal to a MapleCOMSPS Lit, growing the variable set as needed.
 inline Lit to_lit(Wrap* w, int lit) {
@@ -38,6 +40,8 @@ const char* ipasir_signature() { return "maplecomsps-2017-ipasir (dagster)"; }
 void* ipasir_init() {
   Wrap* w = new Wrap();
   w->s = new Solver();
+  w->terminate = NULL;
+  w->term_state = NULL;
   return w;
 }
 
@@ -64,9 +68,27 @@ void ipasir_assume(void* solver, int lit) {
 
 int ipasir_solve(void* solver) {
   Wrap* w = (Wrap*)solver;
-  bool sat = w->s->solve(w->assumptions);   // runs to completion (no budget)
+  int result;
+  if (w->terminate == NULL) {
+    result = w->s->solve(w->assumptions) ? 10 : 20;   // run to completion (no budget)
+  } else {
+    // Yielding: MapleSAT has no during-search callback, so chunk the search by a
+    // conflict budget and poll the terminate callback between chunks. solveLimited
+    // returns l_Undef only when the budget is hit (not yet solved); conflicts and
+    // learned clauses persist across chunks, so this resumes rather than restarts.
+    // Return 0 (unknown) when the callback aborts -> IpasirSolver reports "paused".
+    const int64_t CHUNK = 50000;            // conflicts between callback polls
+    result = 0;
+    for (;;) {
+      w->s->setConfBudget(CHUNK);
+      lbool res = w->s->solveLimited(w->assumptions);
+      if (res != l_Undef) { result = (res == l_True) ? 10 : 20; break; }
+      if (w->terminate(w->term_state)) break;   // asked to abort -> unknown (0)
+    }
+    w->s->budgetOff();
+  }
   w->assumptions.clear();                   // IPASIR: assumptions last one solve
-  return sat ? 10 : 20;
+  return result;
 }
 
 int ipasir_val(void* solver, int lit) {
@@ -79,7 +101,9 @@ int ipasir_val(void* solver, int lit) {
 // minimal IPASIR completeness (Dagster's adapter does not call these):
 int ipasir_failed(void* solver, int lit) { (void)solver; (void)lit; return 0; }
 void ipasir_set_terminate(void* solver, void* state, int (*cb)(void*)) {
-  (void)solver; (void)state; (void)cb;
+  Wrap* w = (Wrap*)solver;
+  w->terminate = cb;
+  w->term_state = state;
 }
 void ipasir_set_learn(void* solver, void* state, int max_len, void (*cb)(void*, int*)) {
   (void)solver; (void)state; (void)max_len; (void)cb;

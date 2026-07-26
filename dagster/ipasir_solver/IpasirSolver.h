@@ -50,10 +50,19 @@ public:
   void  (*f_assume)(void*, int);
   int   (*f_solve)(void*);
   int   (*f_val)(void*, int);
+  void  (*f_set_terminate)(void*, void*, int (*)(void*));  // optional (NULL if absent)
+
+  // Yielding (cube-and-conquer termination responsiveness): if yield_seconds > 0
+  // and the .so honours ipasir_set_terminate, a solve is aborted once `deadline`
+  // (armed per run() to MPI_Wtime()+yield_seconds; <0 = never) passes, so run()
+  // returns 2 ("paused") and the worker polls the master. The IPASIR solver is
+  // incremental, so a resumed solve continues. 0 = solve to completion.
+  double yield_seconds;
+  volatile double deadline;   // read by the terminate callback during a solve
 
   // load_path = the libipasir<solver>.so to dlopen. Aborts if it cannot be opened
   // or is missing IPASIR symbols.
-  IpasirSolver(Cnf* cnf, const char* load_path);
+  IpasirSolver(Cnf* cnf, const char* load_path, double yield_seconds = 0.0);
   bool append_cnf(Cnf* cnf);
   int run(Message* m);
   void load_into_message(Message* m, RangeSet &r, Message* reference_message);

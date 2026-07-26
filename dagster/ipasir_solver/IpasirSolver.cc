@@ -22,6 +22,7 @@ License for more details.
 #include <algorithm>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <mpi.h>          // MPI_Wtime for the yield deadline
 #include <glog/logging.h>
 
 // resolve one IPASIR symbol or die (the whole point is a clear message if the
@@ -36,10 +37,22 @@ static T dlsym_or_die(void* lib, const char* name) {
   return reinterpret_cast<T>(sym);
 }
 
-IpasirSolver::IpasirSolver(Cnf* c, const char* load_path) {
+// IPASIR terminate callback: state points at the owning IpasirSolver. Returns
+// nonzero (abort the solve) once the armed wall-clock deadline passes. Reading a
+// volatile double from the solving thread is fine here (single-threaded; the
+// solver invokes this synchronously between search steps).
+static int ipasir_terminate_cb(void* state) {
+  IpasirSolver* self = (IpasirSolver*)state;
+  return (self->deadline >= 0.0 && MPI_Wtime() >= self->deadline) ? 1 : 0;
+}
+
+IpasirSolver::IpasirSolver(Cnf* c, const char* load_path, double yield_seconds) {
   this->cnf = new Cnf(c);
   this->mark2 = (bool*)calloc(sizeof(bool), c->vc + 1);
   this->solver_unit_contradiction = false;
+  this->yield_seconds = yield_seconds;
+  this->deadline = -1.0;
+  this->f_set_terminate = NULL;
 
   // RTLD_LOCAL keeps the solver's symbols private to this handle, so distinct
   // IpasirSolver instances could even load different IPASIR libraries at once.
@@ -55,8 +68,16 @@ IpasirSolver::IpasirSolver(Cnf* c, const char* load_path) {
   this->f_solve     = dlsym_or_die<int (*)(void*)>(lib, "ipasir_solve");
   this->f_val       = dlsym_or_die<int (*)(void*, int)>(lib, "ipasir_val");
 
+  // Optional: install a terminate callback so long solves yield (cube-and-conquer
+  // termination). dlsym (not _or_die): a .so without ipasir_set_terminate, or whose
+  // glue ignores it, simply runs solves to completion.
+  this->f_set_terminate = reinterpret_cast<void (*)(void*, void*, int (*)(void*))>(
+      dlsym(lib, "ipasir_set_terminate"));
+
   this->solver = f_init();
   VLOG(2) << "ipasir backend: loaded '" << f_signature() << "'";
+  if (yield_seconds > 0.0 && f_set_terminate != NULL)
+    f_set_terminate(solver, this, &ipasir_terminate_cb);
   for (int i = 0; i < c->cc; i++) {
     for (int j = 0; j < c->cl[i]; j++)
       f_add(solver, c->clauses[i][j]);
@@ -129,8 +150,15 @@ int IpasirSolver::run(Message* m) {
     f_assume(solver, m->assignments[j]);       // interface assignment as assumptions
   for (size_t i = 0; i < unit_assignments.size(); i++)
     f_assume(solver, unit_assignments[i]);
-  int res = f_solve(solver);                    // 10 = SATISFIABLE, 20 = UNSAT
-  return (res == 10) ? 1 : 0;
+  // arm the yield deadline for this solve (the terminate callback reads it)
+  deadline = (yield_seconds > 0.0 && f_set_terminate != NULL)
+                 ? MPI_Wtime() + yield_seconds : -1.0;
+  int res = f_solve(solver);                    // 10 = SAT, 20 = UNSAT, 0 = unknown
+  // 0 (interrupted by the terminate callback) -> "paused" (2): the worker polls
+  // the master; a resumed solve continues from the retained incremental state.
+  if (res == 10) return 1;
+  if (res == 20) return 0;
+  return 2;
 }
 
 void IpasirSolver::load_into_message(Message* m, RangeSet &r, Message* reference_message) {
