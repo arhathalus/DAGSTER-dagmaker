@@ -92,9 +92,10 @@ runs each cube to completion uninterruptibly — the old behaviour). The solver 
 incremental, so a yielded solve resumes where it left off; verified verdict- and
 count-identical to no-yield on every backend. Yielding is implemented for **all
 backends**: cadical via its native terminator, lingeling via `lglseterm`, and the
-minisat-derived engines (minisat, glucose, maple) by chunking the search with a
-conflict budget and checking the deadline between chunks. (The native tinisat has
-always yielded, via `-j`/`sat_reporting_time`.)
+budget-chunked engines — minisat/glucose/maple (conflict budget `setConfBudget` +
+`solveLimited`) and cryptominisat (`set_max_confl`) — which chunk the search and
+check the deadline between chunks. (The native tinisat has always yielded, via
+`-j`/`sat_reporting_time`.)
 
 ## Clause sharing (`--share`)
 

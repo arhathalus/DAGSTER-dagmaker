@@ -59,7 +59,15 @@ public:
   int* sls_prefix;
   int* sls_sol_buf;
 
-  CryptominisatSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET); // plain incremental CMS
+  // Wall-clock seconds a single solve may run before yielding ("paused", run()
+  // returns 2) so the worker can poll the master and be reassigned/killed instead
+  // of blocking non-interruptibly. 0 = solve to completion. Implemented by chunking
+  // the solve with set_max_confl() and checking the deadline between chunks (CMS
+  // has no during-search callback). See run().
+  double yield_seconds;
+
+  CryptominisatSolver(Cnf* cnf, int inprocess_level = INPROCESS_UNSET,
+                      double yield_seconds = 0.0); // plain incremental CMS
   // CMS with gnovelty helpers over communicator_sls (prefix-feed + drain)
   CryptominisatSolver(Cnf* cnf, MPI_Comm* communicator_sls, int suggestion_size,
                       int max_vc, int phase, int inprocess_level = INPROCESS_UNSET);

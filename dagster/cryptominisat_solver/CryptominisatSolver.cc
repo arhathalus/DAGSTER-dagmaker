@@ -22,10 +22,11 @@ static inline CMSat::Lit to_cms_lit(int dimacs_lit) {
   return CMSat::Lit(std::abs(dimacs_lit) - 1, dimacs_lit < 0);
 }
 
-CryptominisatSolver::CryptominisatSolver(Cnf* c, int inprocess_level) {
+CryptominisatSolver::CryptominisatSolver(Cnf* c, int inprocess_level, double yield_seconds) {
   this->cnf = new Cnf(c);
   this->mark2 = (bool*)calloc(sizeof(bool), c->vc + 1);
   this->solver_unit_contradiction = false;
+  this->yield_seconds = yield_seconds;
   this->sls = NULL;            // plain mode: no SLS guidance
   this->sls_phase = 0;
   this->sls_suggestion_size = 0;
@@ -148,8 +149,27 @@ int CryptominisatSolver::run(Message* m) {
     sls->poll_solution(sls_sol_buf, cnf->vc + 2, sls_phase);
   }
 
-  CMSat::lbool ret = solver->solve(&assumptions);
-  if (ret != CMSat::l_True)
+  CMSat::lbool ret;
+  if (yield_seconds <= 0.0) {
+    ret = solver->solve(&assumptions);          // solve to completion (no yielding)
+  } else {
+    // Yielding: CryptoMiniSat has no during-search callback, so chunk the solve by
+    // a conflict budget (set_max_confl is a per-call limit) and check a wall-clock
+    // deadline between chunks. solve returns l_Undef only when the budget is hit;
+    // CMS is incremental so state persists -> this resumes rather than restarts.
+    // Return 2 ("paused") on the deadline; the worker then polls the master.
+    const uint64_t CHUNK = 50000;               // conflicts between wall-clock checks
+    double deadline = MPI_Wtime() + yield_seconds;
+    for (;;) {
+      solver->set_max_confl(CHUNK);
+      ret = solver->solve(&assumptions);
+      if (ret != CMSat::l_Undef) break;         // l_True or l_False -> done
+      if (MPI_Wtime() >= deadline)              // budget hit and past the deadline
+        return 2;
+      // else: another chunk (still within the time budget)
+    }
+  }
+  if (ret != CMSat::l_True)                       // l_False (UNSAT); l_Undef can't reach here
     return 0;
 
   // cache the model as +1/-1/0 per (1-based) variable so prune/load stay
