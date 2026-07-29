@@ -34,41 +34,41 @@ solution *counts* under enumeration (`-e 1`).
 ## Lingeling (a second drop-in — proves the genericity)
 
 Lingeling (Biere) is a completely different engine from the MiniSat family, added
-with **zero Dagster code changes** — just another `.so`. Provide the source
-yourself from GitHub (the build script does **not** fetch), then build:
+with **zero Dagster code changes** — just another `.so`. Its source is **vendored**
+under `lingeling/`, so the build is standalone (no fetch):
 
 ```sh
-git clone https://github.com/arminbiere/lingeling ipasir_solver/lingeling
 bash ipasir_solver/build_lingeling.sh                 # -> libipasirlingeling.so
 # (or point at a checkout elsewhere: build_lingeling.sh /path/to/lingeling)
 mpirun -n N dagster --backend lingeling  DAG CNF
 ```
-`lingeling_glue.cpp` (vendored) freezes variables for incremental use. The
-`lingeling/` source dir is git-ignored (you supply it); validated to match the
-other backends on verdicts and enumeration counts.
+`build_lingeling.sh` runs lingeling's `configure.sh` + `make liblgl.a` from the
+vendored source, then links `lingeling_glue.cpp` (which freezes variables for
+incremental use) into the `.so`. Only lingeling's build artifacts (`makefile`,
+`lglcfg.h`, `lglcflags.h`, `*.o`, `liblgl.a`) are git-ignored — the source is
+tracked. Validated to match the other backends on verdicts and enumeration counts.
 
 ## MapleSAT (a third drop-in — an engine Painless uses)
 
 MapleSAT (LRB branching; the Maple family Painless bundles) is a MiniSat/Glucose
 descendant, so `maple_glue.cc` is `glucose_glue.cc` with the `Minisat` namespace.
-Supply the source and build:
+Its source is **vendored** under `maplesat/` (standalone, no fetch):
 
 ```sh
-git clone -b assumptions-incremental https://bitbucket.org/JLiangWaterloo/maplesat ipasir_solver/maple
 bash ipasir_solver/build_maple.sh                     # -> libipasirmaplecomsps.so
 mpirun -n N dagster --backend maple  DAG CNF
 ```
 
-**Use the `assumptions-incremental` branch — NOT `maplecomsps`.** Dagster drives
-the node solver **incrementally with assumptions** (the DAG interface assignment /
-cubes). The competition `maplecomsps` branch mishandles the model under
-assumptions, so Dagster rejects it (`ipasir backend returned false solution`) on
-any multi-node DAG — it only appears to work on single-node/whole-formula solves.
-The `assumptions-incremental` branch's `maplesat/` is clean (no MathCheck
-programmatic hooks) and **validated to match CaDiCaL** on multi-node enumeration
-(costas5/6/7 → 6/17/30 solutions; UNSAT parity on 4unsat). `build_maple.sh` needs
-`-fpermissive` (a 2017 `friend mkLit()` default-arg that modern g++ rejects). The
-`maple/` source dir is git-ignored (you supply it).
+The vendored `maplesat/` is the **`assumptions-incremental` branch** of bitbucket
+`JLiangWaterloo/maplesat`, **NOT `maplecomsps`** — this matters. Dagster drives the
+node solver **incrementally with assumptions** (the DAG interface assignment /
+cubes), and the competition `maplecomsps` branch mishandles the model under
+assumptions, so Dagster would reject it (`ipasir backend returned false solution`)
+on any multi-node DAG — it only appears to work on single-node/whole-formula
+solves. This tree is clean (no MathCheck programmatic hooks) and **validated to
+match CaDiCaL** on multi-node enumeration (costas5/6/7 → 6/17/30 solutions; UNSAT
+parity on 4unsat). `build_maple.sh` needs `-fpermissive` (a 2017 `friend mkLit()`
+default-arg that modern g++ rejects).
 
 > Note: this is the natural fit for a *whole-formula / portfolio* role (how
 > Painless uses Maple). It also works as a Dagster node backend for DAG

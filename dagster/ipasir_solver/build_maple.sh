@@ -3,25 +3,21 @@
 # independent, into a shared library that Dagster's IpasirSolver dlopen's
 # (`--backend maple`, or `--backend ipasir --ipasir-lib .../libipasirmaplecomsps.so`).
 #
-# You SUPPLY the source (the build does NOT fetch), like build_lingeling.sh:
-#   git clone -b assumptions-incremental https://bitbucket.org/JLiangWaterloo/maplesat maple
-# then the clean MapleSAT tree lives at maple/maplesat (core/ mtl/ utils/).
-#
-# IMPORTANT: use the `assumptions-incremental` branch, NOT the `maplecomsps`
-# branch. Dagster drives the node solver INCREMENTALLY with assumptions (the DAG
-# interface assignment / cubes). The competition `maplecomsps` branch mishandles
-# the model under assumptions -> Dagster rejects it ("ipasir backend returned
-# false solution") on any multi-node DAG. The `assumptions-incremental` branch's
-# maplesat/ is verified to match CaDiCaL on multi-node enumeration. (That branch
-# also happens to be free of the MathCheck programmatic hooks in maplecomsps/.)
-# Pass a different source root as $1 if your checkout is elsewhere.
+# The MapleSAT source is VENDORED in this repo at ipasir_solver/maplesat/ (core/
+# mtl/ utils/ simp/), so this builds standalone -- no fetch needed. It is the
+# `assumptions-incremental` branch of bitbucket JLiangWaterloo/maplesat, NOT the
+# `maplecomsps` branch: Dagster drives the node solver INCREMENTALLY with
+# assumptions (the DAG interface assignment / cubes), and the competition
+# `maplecomsps` branch mishandles the model under assumptions -> Dagster rejects it
+# ("ipasir backend returned false solution") on any multi-node DAG. This tree is
+# verified to match CaDiCaL on multi-node enumeration (and is free of the MathCheck
+# programmatic hooks in maplecomsps/). Pass a source root as $1 to override.
 set -e
 cd "$(dirname "$0")"
-SRC_ROOT="${1:-maple/maplesat}"
+SRC_ROOT="${1:-maplesat}"
 if [ ! -f "$SRC_ROOT/core/Solver.cc" ]; then
-  echo "Maple source not found at $SRC_ROOT/core/Solver.cc" >&2
-  echo "  git clone -b assumptions-incremental https://bitbucket.org/JLiangWaterloo/maplesat maple" >&2
-  echo "  (then it lives at maple/maplesat; or pass a checkout path: build_maple.sh /path/to/maplesat)" >&2
+  echo "MapleSAT source not found at $SRC_ROOT/core/Solver.cc" >&2
+  echo "  (it should be vendored at ipasir_solver/maplesat/; or pass a path: build_maple.sh /path/to/maplesat)" >&2
   exit 1
 fi
 CXX=${CXX:-g++}
