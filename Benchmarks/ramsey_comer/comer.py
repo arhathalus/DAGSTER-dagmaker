@@ -99,6 +99,75 @@ class DirectProduct:
         return "%sx%s" % (self.G.name(), self.H.name())
 
 
+class TableGroup:
+    """A group given by its Cayley table (table[a][b] = index of a*b). Lets us
+    plug in ANY finite group -- in particular every group of an order, dumped
+    from GAP's SmallGroups library (see gap_groups)."""
+    def __init__(self, table, name="G"):
+        self.table = table
+        self.n = len(table)
+        self.elements = list(range(self.n))
+        self._name = name
+        self.e = next(a for a in range(self.n) if all(table[a][b] == b for b in range(self.n)))
+        self._inv = [next(b for b in range(self.n) if table[a][b] == self.e) for a in range(self.n)]
+    def op(self, a, b):
+        return self.table[a][b]
+    def inv(self, a):
+        return self._inv[a]
+    def name(self):
+        return self._name
+
+
+def gap_available():
+    import shutil
+    return shutil.which("gap") is not None
+
+
+def gap_groups(order, cache_dir=None):
+    """Yield a TableGroup for EVERY group of the given order, from GAP's
+    SmallGroups library (the exhaustive enumeration). Results are cached per
+    order under groups_cache/ so GAP runs at most once per order. Returns []
+    (with a note) if GAP isn't installed."""
+    if cache_dir is None:
+        cache_dir = os.path.join(HERE, "groups_cache")
+    os.makedirs(cache_dir, exist_ok=True)
+    cache = os.path.join(cache_dir, "order_%d.txt" % order)
+    if not os.path.exists(cache):
+        if not gap_available():
+            return []
+        # GAP program: dump each group's Cayley table (0-based indices).
+        prog = (
+            "n := %d;;\n"
+            "for i in [1..NrSmallGroups(n)] do\n"
+            "  G := SmallGroup(n, i);; elts := Elements(G);;\n"
+            "  Print(\"GROUP \", n, \" \", i, \"\\n\");;\n"
+            "  for a in [1..n] do\n"
+            "    for b in [1..n] do Print(Position(elts, elts[a]*elts[b])-1, \" \"); od;;\n"
+            "    Print(\"\\n\");;\n"
+            "  od;;\n"
+            "  Print(\"END\\n\");;\n"
+            "od;;\nQUIT;;\n" % order
+        )
+        p = subprocess.run(["gap", "-q", "-b"], input=prog, capture_output=True, text=True, timeout=1800)
+        with open(cache, "w") as f:
+            f.write(p.stdout)
+    # parse the cache
+    groups = []
+    with open(cache) as f:
+        lines = [ln for ln in f.read().splitlines()]
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith("GROUP"):
+            _, n, gid = lines[i].split()
+            n = int(n)
+            table = [list(map(int, lines[i + 1 + r].split())) for r in range(n)]
+            groups.append(TableGroup(table, name="G%d_%s" % (n, gid)))
+            i += n + 2                       # GROUP line + n table rows + END line
+        else:
+            i += 1
+    return groups
+
+
 def check_group(G):
     """Sanity-check the group axioms (closure, identity, inverse, associativity)
     so an encoding bug can't masquerade as a maths result. Returns (ok, reason)."""
@@ -121,22 +190,47 @@ def check_group(G):
     return (True, "ok")
 
 
+def semidirect_products(order):
+    """Yield Z_n : Z_m for n*m = order and every twist t (t^m = 1 mod n, t != 1).
+    Semidirect products are the main source of non-abelian groups; this covers
+    dihedral (t = -1) and much more. Isomorphic duplicates only cost time."""
+    import math
+    for m in range(2, order):
+        if order % m:
+            continue
+        n = order // m
+        if n < 2:
+            continue
+        for t in range(2, n):
+            if math.gcd(t, n) != 1 or pow(t, m, n) != 1:
+                continue
+            enc = lambda a, b: a * m + b
+            table = [[0] * order for _ in range(order)]
+            for a1 in range(n):
+                for b1 in range(m):
+                    tb1 = pow(t, b1, n)
+                    for a2 in range(n):
+                        for b2 in range(m):
+                            table[enc(a1, b1)][enc(a2, b2)] = enc((a1 + tb1 * a2) % n, (b1 + b2) % m)
+            yield TableGroup(table, name="Z%d:Z%d(t%d)" % (n, m, t))
+
+
 def catalog(order):
-    """Yield the groups of a given order that we can build directly (cyclic +
-    dihedral + a few direct products). NOT exhaustive (that needs GAP), but a
-    broad non-abelian sweep. Deduplication across isomorphic builds is left to
-    the caller/solver -- an isomorphic re-run only costs time, never correctness."""
+    """Yield the groups of a given order. If GAP is installed, this is the
+    EXHAUSTIVE SmallGroups enumeration (every group of that order). Otherwise it
+    falls back to the families we build directly -- cyclic + direct products +
+    semidirect products (dihedral included) -- a broad but NOT exhaustive sweep.
+    Deduplication across isomorphic builds is left to the solver (only costs time)."""
+    if gap_available():
+        yield from gap_groups(order)                                # exhaustive
+        return
     yield CyclicGroup(order)
-    if order % 2 == 0 and order >= 6:
-        yield DihedralGroup(order // 2)                              # D_{order/2}
-    # a couple of direct-product forms for composite orders
-    for a in range(2, order):
+    yield from semidirect_products(order)                           # non-abelian families
+    for a in range(2, order):                                       # a few direct products
         if order % a == 0:
             b = order // a
             if 2 <= b <= a:
                 yield DirectProduct(CyclicGroup(a), CyclicGroup(b))
-            if a % 2 == 0 and a >= 6 and b >= 2 and b <= (order // a):
-                yield DirectProduct(DihedralGroup(a // 2), CyclicGroup(b))
 
 
 def inverse_classes(G):

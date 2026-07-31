@@ -1,0 +1,2 @@
+groups_cache/ holds GAP SmallGroups dumps (regenerable); ignore them
+*.txt
