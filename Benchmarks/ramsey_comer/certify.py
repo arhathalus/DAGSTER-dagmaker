@@ -3,14 +3,27 @@
 group of order <= K" result with checked DRAT proofs.
 
 For every group (from GAP's exhaustive SmallGroups enumeration) of each order in a
-range, encode the Comer/Cayley representation problem **without symmetry breaking**
-(so a certified UNSAT is airtight -- it does not rest on the value-precedence
-break being verdict-preserving), solve with standalone CaDiCaL emitting a DRAT
-proof, and check that proof with drat-trim. A group that comes back UNSAT with a
-VERIFIED proof is a machine-checked theorem: that group admits no such Cayley
-colouring. (A SAT would be a representation -- it would resolve the open case.)
+range, encode the Comer/Cayley representation problem, solve with standalone
+CaDiCaL emitting a DRAT proof, and check that proof with drat-trim. A group that
+comes back UNSAT with a VERIFIED proof is a machine-checked theorem: that group
+admits no such Cayley colouring. (A SAT would be a representation -- it would
+resolve the open case.)
 
-  certify.py -M 8 --range 15 48 [--symbreak] [--timeout 300] [--proofs DIR]
+Two modes:
+  default    -- encode WITH colour value-precedence symmetry breaking. Fast and
+                feasible over the whole range. The resulting theorem then rests on
+                one standard lemma: value precedence is VERDICT-PRESERVING for the
+                M fully-interchangeable colours (any colour permutation maps a
+                representation to a representation, so requiring colours to appear
+                in precedence order keeps the lex-least member of each orbit; hence
+                the broken CNF is SAT iff the unbroken one is). Sound (Crawford et
+                al.); so UNSAT of the broken CNF => no representation.
+  --airtight -- encode WITHOUT symmetry breaking, so a certified UNSAT rests on
+                nothing but the checked proof. Bulletproof but expensive: proofs
+                are ~20-1000x larger and some highly-symmetric groups (e.g. the
+                order-32 modular group) don't solve in reasonable time.
+
+  certify.py -M 8 --range 15 48 [--airtight] [--timeout 300] [--proofs DIR]
 """
 import argparse
 import os
@@ -60,9 +73,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("-M", "--colours", type=int, required=True)
     ap.add_argument("--range", nargs=2, type=int, metavar=("LO", "HI"), required=True)
-    ap.add_argument("--symbreak", action="store_true",
-                    help="certify WITH value-precedence breaking (faster, but then the theorem "
-                         "relies on that break being verdict-preserving); default is airtight, no break")
+    ap.add_argument("--airtight", action="store_true",
+                    help="encode WITHOUT symmetry breaking, so a certified UNSAT rests on nothing "
+                         "but the checked proof (bulletproof but expensive -- large proofs, some "
+                         "groups time out). Default: WITH value-precedence breaking (feasible; the "
+                         "theorem then also uses the standard 'value precedence is verdict-preserving' lemma).")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--proofs", metavar="DIR", help="keep the verified .drat proofs here")
     args = ap.parse_args()
@@ -71,8 +86,9 @@ def main():
         print("WARNING: GAP not on PATH -> using the non-exhaustive fallback catalogue "
               "(the result would NOT be a complete 'every group' statement).", file=sys.stderr)
 
-    print("Certifying: M=%d, groups of order %d..%d, symbreak=%s\n"
-          % (args.colours, args.range[0], args.range[1], args.symbreak))
+    print("Certifying: M=%d, groups of order %d..%d, mode=%s\n"
+          % (args.colours, args.range[0], args.range[1],
+             "airtight (no symmetry breaking)" if args.airtight else "value-precedence breaking"))
     print("  %-4s %-12s %-8s %-9s %8s %10s" % ("n", "group", "verdict", "proof?", "vars", "proofKB"))
     print("  " + "-" * 62)
     total = certified = 0
@@ -80,7 +96,8 @@ def main():
     unverified = []
     for order in range(args.range[0], args.range[1] + 1):
         for G in comer.catalog(order):
-            r = certify_group(G, args.colours, not args.symbreak, args.timeout, args.proofs)
+            r = certify_group(G, args.colours, symbreak=not args.airtight,
+                              timeout=args.timeout, proofs_dir=args.proofs)
             total += 1
             mark = ""
             if r["verdict"] == "UNSAT" and r["verified"]:
@@ -103,8 +120,8 @@ def main():
         print("THEOREM (machine-checked): no Cayley representation of the %d-colour Ramsey algebra"
               % args.colours)
         print("on any group of order in %d..%d.%s"
-              % (args.range[0], args.range[1], "" if not args.symbreak else
-                 "  [modulo value-precedence breaking being verdict-preserving]"))
+              % (args.range[0], args.range[1], "" if args.airtight else
+                 "  [modulo the standard lemma: value-precedence breaking is verdict-preserving]"))
     sys.exit(0 if (certified == total and not sat) else 1)
 
 
