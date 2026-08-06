@@ -135,34 +135,42 @@ def gap_groups(order, cache_dir=None):
     if not os.path.exists(cache):
         if not gap_available():
             return []
-        # GAP program: dump each group's Cayley table (0-based indices).
+        # GAP program: dump each group's Cayley table (0-based indices), row-major.
+        # SetPrintFormattingStatus(...,false) disables GAP's line-wrapping so long
+        # rows don't split; the parser below is wrapping-agnostic regardless.
         prog = (
+            "SetPrintFormattingStatus(\"*stdout*\", false);;\n"
             "n := %d;;\n"
             "for i in [1..NrSmallGroups(n)] do\n"
             "  G := SmallGroup(n, i);; elts := Elements(G);;\n"
             "  Print(\"GROUP \", n, \" \", i, \"\\n\");;\n"
             "  for a in [1..n] do\n"
             "    for b in [1..n] do Print(Position(elts, elts[a]*elts[b])-1, \" \"); od;;\n"
-            "    Print(\"\\n\");;\n"
             "  od;;\n"
-            "  Print(\"END\\n\");;\n"
+            "  Print(\"\\nEND\\n\");;\n"
             "od;;\nQUIT;;\n" % order
         )
         p = subprocess.run(["gap", "-q", "-b"], input=prog, capture_output=True, text=True, timeout=1800)
         with open(cache, "w") as f:
             f.write(p.stdout)
-    # parse the cache
+    # parse: for each GROUP block, gather ALL integer tokens until END (robust to
+    # any line wrapping) and reshape into the n x n Cayley table.
     groups = []
-    with open(cache) as f:
-        lines = [ln for ln in f.read().splitlines()]
+    toks = open(cache).read().split()
     i = 0
-    while i < len(lines):
-        if lines[i].startswith("GROUP"):
-            _, n, gid = lines[i].split()
-            n = int(n)
-            table = [list(map(int, lines[i + 1 + r].split())) for r in range(n)]
+    while i < len(toks):
+        if toks[i] == "GROUP":
+            n, gid = int(toks[i + 1]), toks[i + 2]
+            i += 3
+            flat = []
+            while i < len(toks) and toks[i] != "END":
+                flat.append(int(toks[i])); i += 1
+            i += 1                           # skip END
+            if len(flat) != n * n:
+                raise ValueError("order %d group %s: got %d table entries, want %d"
+                                 % (n, gid, len(flat), n * n))
+            table = [flat[r * n:(r + 1) * n] for r in range(n)]
             groups.append(TableGroup(table, name="G%d_%s" % (n, gid)))
-            i += n + 2                       # GROUP line + n table rows + END line
         else:
             i += 1
     return groups
