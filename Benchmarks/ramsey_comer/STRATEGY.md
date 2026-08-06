@@ -150,6 +150,11 @@ core cadical, 60 s) around order 45.
 
 ---
 
+> **UPDATE (certified):** the exhaustive small-order sweep was carried to a
+> machine-checked theorem -- **no vertex-transitive (Cayley) representation of the
+> 8-colour algebra on any group of order <= 48** (223 groups, all UNSAT, DRAT
+> proofs checked by drat-trim). See `CERTIFIED.md`.
+
 ## 5. Best approach to *find* M = 8 / M = 13 (recommended)
 
 The Comer/Cayley structured search (§3b) is the right method — validated, and it's
