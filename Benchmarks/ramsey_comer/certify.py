@@ -35,19 +35,26 @@ import comer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CADICAL = os.path.join(HERE, "..", "..", "dagster", "cadical_solver", "cadical", "build", "cadical")
+KISSAT = os.path.join(HERE, "..", "..", "utilities", "kissat", "build", "kissat")
 DRAT_TRIM = os.path.join(HERE, "..", "..", "utilities", "proof", "drat-trim")
 
+# Both emit an ASCII DRAT proof (drat-trim reads it directly) via "--no-binary".
+# Kissat (SAT-competition winner) is markedly stronger than CaDiCaL on the harder
+# larger-order instances -- use it to push the frontier past order 48.
+SOLVERS = {"cadical": CADICAL, "kissat": KISSAT}
 
-def certify_group(G, M, symbreak, timeout, proofs_dir=None):
-    """Encode -> cadical(+DRAT) -> drat-trim. Returns dict(verdict, verified, bytes)."""
+
+def certify_group(G, M, symbreak, timeout, proofs_dir=None, solver="cadical"):
+    """Encode -> solver(+DRAT) -> drat-trim. Returns dict(verdict, verified, bytes)."""
     enc, *_ = comer.encode(G, M, symbreak=symbreak)
     cnf = tempfile.mktemp(suffix=".cnf")
     proof = tempfile.mktemp(suffix=".drat")
     comer.write_dimacs(enc, cnf)
+    binary = SOLVERS[solver]
     try:
         # ASCII DRAT (--no-binary) so drat-trim reads it directly; -q quiet.
         try:
-            rc = subprocess.call([CADICAL, "-q", "--no-binary", cnf, proof], timeout=timeout,
+            rc = subprocess.call([binary, "-q", "--no-binary", cnf, proof], timeout=timeout,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except subprocess.TimeoutExpired:
             return dict(verdict="TIMEOUT", verified=False, bytes=0, nvars=enc.nvars, ncls=len(enc.clauses))
@@ -80,14 +87,19 @@ def main():
                          "theorem then also uses the standard 'value precedence is verdict-preserving' lemma).")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--proofs", metavar="DIR", help="keep the verified .drat proofs here")
+    ap.add_argument("--solver", choices=sorted(SOLVERS), default="cadical",
+                    help="DRAT-emitting solver (default cadical; kissat is stronger on the "
+                         "harder larger-order instances).")
     args = ap.parse_args()
+    if not os.path.exists(SOLVERS[args.solver]):
+        sys.exit("solver binary not found: %s (build it first)" % SOLVERS[args.solver])
 
     if not comer.gap_available():
         print("WARNING: GAP not on PATH -> using the non-exhaustive fallback catalogue "
               "(the result would NOT be a complete 'every group' statement).", file=sys.stderr)
 
-    print("Certifying: M=%d, groups of order %d..%d, mode=%s\n"
-          % (args.colours, args.range[0], args.range[1],
+    print("Certifying: M=%d, groups of order %d..%d, solver=%s, mode=%s\n"
+          % (args.colours, args.range[0], args.range[1], args.solver,
              "airtight (no symmetry breaking)" if args.airtight else "value-precedence breaking"))
     print("  %-4s %-12s %-8s %-9s %8s %10s" % ("n", "group", "verdict", "proof?", "vars", "proofKB"))
     print("  " + "-" * 62)
@@ -97,7 +109,7 @@ def main():
     for order in range(args.range[0], args.range[1] + 1):
         for G in comer.catalog(order):
             r = certify_group(G, args.colours, symbreak=not args.airtight,
-                              timeout=args.timeout, proofs_dir=args.proofs)
+                              timeout=args.timeout, proofs_dir=args.proofs, solver=args.solver)
             total += 1
             mark = ""
             if r["verdict"] == "UNSAT" and r["verified"]:
