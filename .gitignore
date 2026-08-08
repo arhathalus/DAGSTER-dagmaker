@@ -44,3 +44,6 @@ dag_out.txt
 # Claude Code local state (tool-local, not for tracking)
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Kissat is cloned+built locally (see BUILDING.md); do not track its tree
+utilities/kissat/
